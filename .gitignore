@@ -1,0 +1,9 @@
+# Настройки IDE JetBrains (Rider, PyCharm и т.д.)
+.idea/
+
+# Окружение
+.env
+
+# Окружения и кэш внутри подпапки app_core
+app_core/.venv/
+app_core/.hf_cache/

@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pydantic
+pandas
+numpy
+plotly
+yfinance
+transformers
+chronos-forecasting
+python-multipart
+debugpy
+--extra-index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple
+t-tech-investments 
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch

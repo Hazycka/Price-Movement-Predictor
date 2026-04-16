@@ -1,0 +1,18 @@
+services:
+  app-core:
+    build:
+      context: ./app_core
+    container_name: app-core
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app_core/app:/app/app
+      - ./data:/app/data
+    env_file:
+      - ./.env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    gpus: all
+    command: python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
