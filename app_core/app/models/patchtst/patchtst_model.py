@@ -9,6 +9,7 @@ import pandas as pd
 from ..base import ForecastModel, QuantileForecast, OHLCQuantileForecast
 from .patchtst_runtime import PatchTSTRuntime, QUANTILE_LEVELS
 from .patchtst_decoder import PatchTSTDecoder
+from ...services.market_data.common import DEFAULT_FREQ
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,10 @@ DEFAULT_MODEL_ID = "ibm-granite/granite-timeseries-patchtst-fm-r1"
 OHLC_CHANNELS  = ["open", "high", "low", "close"]
 OHLCV_CHANNELS = ["open", "high", "low", "close", "volume"]
 TIMESTAMP_COL  = "timestamp"
-TIMESTAMP_FREQ = "h"
+
+# Формат колонок квантилей в выводе pipeline: {channel}_q{quantile}
+# Пример: open_q0.1, close_q0.5
+QUANTILE_COL_TEMPLATE = "{channel}_q{q}"
 
 
 class PatchTSTForecastModel(ForecastModel):
@@ -36,24 +40,39 @@ class PatchTSTForecastModel(ForecastModel):
         self._runtime = PatchTSTRuntime(model_id=self.model_id)
         self._last_input_window_info: dict = {}
 
-    def _candles_to_df(self, candles: list[dict[str, float]], forecast_columns: list[str]) -> pd.DataFrame:
+    def _candles_to_df(
+            self,
+            candles: list[dict[str, float]],
+            forecast_columns: list[str],
+            freq: str,
+    ) -> pd.DataFrame:
         df = pd.DataFrame(candles)
         for col in forecast_columns:
             if col not in df.columns:
                 df[col] = 0.0
-        df[TIMESTAMP_COL] = pd.date_range(start="2000-01-01", periods=len(df), freq=TIMESTAMP_FREQ)
+        df[TIMESTAMP_COL] = pd.date_range(start="2000-01-01", periods=len(df), freq=freq)
         return df[[TIMESTAMP_COL] + forecast_columns]
 
-    def _build_future_timestamps(self, context_df: pd.DataFrame, horizon: int) -> pd.DataFrame:
+    def _build_future_timestamps(
+            self,
+            context_df: pd.DataFrame,
+            horizon: int,
+            freq: str,
+    ) -> pd.DataFrame:
         """
         Строит DataFrame с будущими временными метками.
         Pipeline требует future_time_series как DataFrame с timestamp колонкой — не int.
         """
         last_ts = context_df[TIMESTAMP_COL].iloc[-1]
-        future_timestamps = pd.date_range(start=last_ts, periods=horizon + 1, freq=TIMESTAMP_FREQ)[1:]
+        future_timestamps = pd.date_range(start=last_ts, periods=horizon + 1, freq=freq)[1:]
         return pd.DataFrame({TIMESTAMP_COL: future_timestamps})
 
-    def _run_pipeline(self, candles: list[dict[str, float]], horizon: int, context: dict | None = None) -> tuple[pd.DataFrame, list[str]]:
+    def _run_pipeline(
+            self,
+            candles: list[dict[str, float]],
+            horizon: int,
+            context: dict | None = None,
+    ) -> tuple[pd.DataFrame, list[str]]:
         if not candles:
             raise ValueError("Input candles are empty.")
         if horizon <= 0:
@@ -62,6 +81,8 @@ class PatchTSTForecastModel(ForecastModel):
             raise ValueError(f"Для PatchTST FM требуется минимум 16 точек истории, получено {len(candles)}.")
 
         self._runtime.ensure_loaded()
+
+        freq = (context or {}).get("freq", DEFAULT_FREQ)
 
         forecast_columns = (
             OHLCV_CHANNELS if self.include_volume_in_forecast and any("volume" in c for c in candles)
@@ -86,27 +107,43 @@ class PatchTSTForecastModel(ForecastModel):
             "horizon": horizon,
         }
 
-        logger.info("[PatchTST FM] Инференс: horizon=%d channels=%s history=%d trimmed=%s",
-                    horizon, forecast_columns, len(candles), trimmed)
+        logger.info(
+            "[PatchTST FM] Инференс: horizon=%d channels=%s history=%d trimmed=%s freq=%s",
+            horizon, forecast_columns, len(candles), trimmed, freq,
+        )
 
-        context_df = self._candles_to_df(candles, forecast_columns)
-        future_df  = self._build_future_timestamps(context_df, horizon)
+        context_df = self._candles_to_df(candles, forecast_columns, freq)
+        future_df  = self._build_future_timestamps(context_df, horizon, freq)
 
         forecast_df = self._runtime.pipeline(
             context_df,
             future_time_series=future_df,
             timestamp_column=TIMESTAMP_COL,
             target_columns=forecast_columns,
+            id_columns=[],
+            freq=freq,
         )
 
-        logger.info("[PatchTST FM] Pipeline вернул DataFrame: shape=%s columns=%s",
-                    forecast_df.shape, list(forecast_df.columns))
+        logger.info(
+            "[PatchTST FM] Pipeline вернул DataFrame: shape=%s columns=%s",
+            forecast_df.shape, list(forecast_df.columns),
+        )
 
         return forecast_df, forecast_columns
 
-    def _extract_channel_quantiles(self, forecast_df: pd.DataFrame, channel: str, horizon: int) -> QuantileForecast:
+    def _extract_channel_quantiles(
+            self,
+            forecast_df: pd.DataFrame,
+            channel: str,
+            horizon: int,
+    ) -> QuantileForecast:
+        """
+        Извлекает квантили для одного канала из forecast_df.
+        Pipeline возвращает колонки в формате: {channel}_q{quantile}
+        Например: open_q0.1, close_q0.5
+        """
         def _get(q: float) -> list[float]:
-            col = f"{channel}_{q}"
+            col = QUANTILE_COL_TEMPLATE.format(channel=channel, q=q)
             if col not in forecast_df.columns:
                 available = [c for c in forecast_df.columns if channel in c]
                 raise ValueError(
@@ -115,7 +152,8 @@ class PatchTSTForecastModel(ForecastModel):
                 )
             return [float(v) for v in forecast_df[col].tolist()[:horizon]]
 
-        return QuantileForecast(q10=_get(0.1), q25=_get(0.25), q50=_get(0.5), q75=_get(0.75), q90=_get(0.9))
+        q_map = dict(zip(["q10", "q25", "q50", "q75", "q90"], QUANTILE_LEVELS))
+        return QuantileForecast(**{name: _get(q) for name, q in q_map.items()})
 
     def predict_line_exact(self, candles, horizon, context=None) -> list[float]:
         try:
@@ -156,7 +194,7 @@ class PatchTSTForecastModel(ForecastModel):
 
             return OHLCQuantileForecast(open=open_qf, high=high_qf, low=low_qf, close=close_qf, volume=volume_qf)
         except Exception as ex:
-            raise RuntimeError(f"Ошибка predict_ohlc_quantiles PatchTST FM: {ex}") from ex
+            raise RuntimeError(f"Ошибка predict_ohlc_quantiles PatchTST FM: {ex!r}") from ex
 
     def get_info(self) -> dict:
         return {

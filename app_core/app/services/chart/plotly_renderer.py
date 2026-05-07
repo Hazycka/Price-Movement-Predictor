@@ -386,7 +386,7 @@ def build_forecast_chart_html(
             # Вертикаль начала прогноза (белая) — граница история/прогноз
             _add_vertical_line(
                 fig=fig,
-                x_val=x_forecast[0] if x_forecast else None,
+                x_val=x_history[-1],
                 y_min=y_min, y_max=y_max,
                 color="rgba(255, 255, 255, 0.7)",
                 dash="dash",

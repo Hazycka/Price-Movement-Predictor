@@ -15,7 +15,7 @@
             "history_up_to": request.history_up_to,
             "requested_chart_type_history": request.chart_type_history,
             "requested_chart_type_forecast": request.chart_type_forecast,
-            "num_samples": request.num_samples,
+            "model_options": request.model_options,
             "feature_plugins": request.feature_plugins,
             "forecast_representation": "ohlc_candles",
             "model_required_context_length": window_info.get("required_context_length") if isinstance(window_info, dict) else None,

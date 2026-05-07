@@ -106,7 +106,7 @@ class ForecastRequest(BaseModel):
     history_up_to: str | None = Field(default=None, description="Дата конца окна истории, например 2026-03-20")
     interval: str = Field(default="1d", description="Интервал данных, например 1d, 1h")
 
-    indicators: list[str] = Field(default_factory=lambda: ["sma_20", "ema_20", "rsi_14"])
+    indicators: list[str] = Field(default_factory=list)
     feature_plugins: list[str] = Field(
         default_factory=list,
         description="Список feature-плагинов для multivariate моделей"

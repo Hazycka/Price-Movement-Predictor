@@ -11,6 +11,24 @@ SUPPORTED_INTERVALS = (
     "1d", "1w", "1mo"
 )
 
+INTERVAL_TO_FREQ: dict[str, str] = {
+    "1min":  "min",
+    "2min":  "2min",
+    "3min":  "3min",
+    "5min":  "5min",
+    "10min": "10min",
+    "15min": "15min",
+    "30min": "30min",
+    "1h":    "h",
+    "2h":    "2h",
+    "4h":    "4h",
+    "1d":    "B",
+    "1w":    "W",
+    "1mo":   "MS",
+}
+
+DEFAULT_FREQ = "h"
+
 
 def parse_history_period(period: str) -> pd.DateOffset:
     value = int(period[:-1])
