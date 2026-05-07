@@ -1,53 +1,38 @@
-﻿import numpy as np
+﻿"""
+Декодер для PatchTST FM.
+
+Pipeline возвращает pandas DataFrame — декодирование квантилей
+происходит в patchtst_model.py через _extract_channel_quantiles.
+
+Этот модуль содержит только утилиту коррекции физических ограничений свечей,
+которая гарантирует high >= max(o,c) и low <= min(o,c) для каждого квантиля.
+"""
+from ..base import QuantileForecast
 
 
 class PatchTSTDecoder:
-    @staticmethod
-    def extract_prediction_array(outputs):
-        pred = None
-        for attr in ("prediction_outputs", "regression_outputs", "logits"):
-            if hasattr(outputs, attr):
-                pred = getattr(outputs, attr)
-                break
-        if pred is None:
-            if isinstance(outputs, tuple) and len(outputs) > 0:
-                pred = outputs[0]
-            else:
-                raise RuntimeError("PatchTST вернул неожиданный формат выхода.")
-
-        arr = pred.detach().cpu().numpy() if hasattr(pred, "detach") else np.asarray(pred)
-        return np.squeeze(arr)
 
     @staticmethod
-    def decode_close(arr: np.ndarray, feature_columns: list[str], target_column: str) -> list[float]:
-        if arr.ndim == 1:
-            point_forecast = arr
-        elif arr.ndim == 2:
-            point_forecast = arr[0] if arr.shape[0] > 1 else arr.flatten()
-        elif arr.ndim >= 3:
-            target_idx = feature_columns.index(target_column) if target_column in feature_columns else 3
-            point_forecast = arr[0, :, target_idx] if arr.shape[-1] > target_idx else arr[0, :, 0]
-        else:
-            raise RuntimeError(f"Неожиданная форма прогноза PatchTST: {arr.shape}")
+    def enforce_ohlc_consistency(
+            open_qf: QuantileForecast,
+            high_qf: QuantileForecast,
+            low_qf: QuantileForecast,
+            close_qf: QuantileForecast,
+    ) -> tuple[QuantileForecast, QuantileForecast, QuantileForecast, QuantileForecast]:
+        """
+        Корректирует high и low чтобы свечи были физически корректны.
 
-        return [float(x) for x in np.asarray(point_forecast).flatten().tolist()]
+        Модель channel-independent — она не знает об ограничениях
+        high >= max(open, close) и low <= min(open, close).
+        Применяем коррекцию для каждого квантиля независимо.
+        """
+        for q_name in ("q10", "q25", "q50", "q75", "q90"):
+            o = getattr(open_qf,  q_name)
+            h = getattr(high_qf,  q_name)
+            l = getattr(low_qf,   q_name)
+            c = getattr(close_qf, q_name)
 
-    @staticmethod
-    def decode_ohlc(arr: np.ndarray, feature_columns: list[str]) -> dict[str, list[float]]:
-        if arr.ndim < 3:
-            raise ValueError("Модель вернула не-многоканальный прогноз. Для OHLC нужен каналовый выход.")
+            setattr(high_qf, q_name, [max(o[i], h[i], l[i], c[i]) for i in range(len(o))])
+            setattr(low_qf,  q_name, [min(o[i], h[i], l[i], c[i]) for i in range(len(o))])
 
-        ch_open = feature_columns.index("open")
-        ch_high = feature_columns.index("high")
-        ch_low = feature_columns.index("low")
-        ch_close = feature_columns.index("close")
-
-        if arr.shape[-1] <= max(ch_open, ch_high, ch_low, ch_close):
-            raise ValueError("В выходе модели недостаточно каналов для OHLC.")
-
-        return {
-            "open": arr[0, :, ch_open].astype(float).tolist(),
-            "high": arr[0, :, ch_high].astype(float).tolist(),
-            "low": arr[0, :, ch_low].astype(float).tolist(),
-            "close": arr[0, :, ch_close].astype(float).tolist(),
-        }
+        return open_qf, high_qf, low_qf, close_qf

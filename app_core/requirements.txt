@@ -5,12 +5,16 @@ pandas
 numpy
 plotly
 yfinance
+granite-tsfm
 transformers
-chronos-forecasting
+#chronos-forecasting
 python-multipart
 debugpy
---extra-index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple
-t-tech-investments 
 
---extra-index-url https://download.pytorch.org/whl/cu121
-torch
+--extra-index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple
+t-tech-investments
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
+torchaudio==2.10.0+cu128

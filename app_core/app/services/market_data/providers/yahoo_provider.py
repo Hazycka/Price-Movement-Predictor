@@ -5,7 +5,7 @@ import yfinance as yf
 
 from ..base import MarketDataProvider, MarketDataRequest
 from ..common import resolve_history_window
-from ....schemas import YahooProviderOptions
+from ....schemas import YahooProviderOptions, ProviderOptions
 
 
 def _normalize_ohlc_columns(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -14,17 +14,17 @@ def _normalize_ohlc_columns(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
             data = data.xs(ticker, axis=1, level=-1)
         else:
             data.columns = data.columns.get_level_values(0)
-
-    data.columns = [str(column) for column in data.columns]
+    data.columns = [str(c) for c in data.columns]
     return data
 
 
 class YahooMarketDataProvider(MarketDataProvider):
+
     def load_ohlc(self, request: MarketDataRequest) -> tuple[list[str], list[dict[str, float]]]:
         options = request.provider_options
         if not isinstance(options, YahooProviderOptions):
             raise TypeError(f"Ожидались настройки Yahoo, но получено {type(options).__name__}")
-        
+
         ticker = options.ticker
         if not ticker:
             raise ValueError("Для Yahoo provider требуется ticker.")
@@ -34,11 +34,9 @@ class YahooMarketDataProvider(MarketDataProvider):
         data = yf.download(
             tickers=ticker,
             period=None if start else request.history_period,
-            start=start,
-            end=end,
+            start=start, end=end,
             interval=request.interval,
-            auto_adjust=False,
-            progress=False
+            auto_adjust=False, progress=False,
         )
 
         if data.empty:
@@ -46,25 +44,38 @@ class YahooMarketDataProvider(MarketDataProvider):
 
         data = _normalize_ohlc_columns(data, ticker.upper())
 
-        required_columns = ["Open", "High", "Low", "Close"]
-        missing_columns = [column for column in required_columns if column not in data.columns]
-        if missing_columns:
-            raise ValueError(
-                f"В данных по тикеру '{ticker}' отсутствуют колонки: {missing_columns}. "
-                f"Фактические колонки: {list(data.columns)}"
-            )
+        required = ["Open", "High", "Low", "Close"]
+        missing = [c for c in required if c not in data.columns]
+        if missing:
+            raise ValueError(f"В данных '{ticker}' отсутствуют колонки: {missing}.")
 
-        data = data.dropna(subset=required_columns)
+        data = data.dropna(subset=required)
         dates = [str(idx) for idx in data.index.tolist()]
-
-        candles: list[dict[str, float]] = []
-        for _, row in data.iterrows():
-            candles.append({
-                "open": float(row["Open"]),
-                "high": float(row["High"]),
-                "low": float(row["Low"]),
-                "close": float(row["Close"]),
-                "volume": float(row["Volume"]) if "Volume" in data.columns and not pd.isna(row["Volume"]) else 0.0
-            })
-
+        candles = [
+            {
+                "open":   float(row["Open"]),
+                "high":   float(row["High"]),
+                "low":    float(row["Low"]),
+                "close":  float(row["Close"]),
+                "volume": float(row["Volume"]) if "Volume" in data.columns and not pd.isna(row["Volume"]) else 0.0,
+            }
+            for _, row in data.iterrows()
+        ]
         return dates, candles
+
+    def load_ohlc_range(
+            self,
+            provider_options: ProviderOptions,
+            interval: str,
+            from_dt: str,
+            to_dt: str,
+    ) -> tuple[list[str], list[dict[str, float]]]:
+        """
+        Заглушка: Yahoo поддерживает загрузку по диапазону через yfinance start/end.
+        TODO: реализовать через yf.download(start=from_dt, end=to_dt).
+        """
+        raise NotImplementedError(
+            "YahooMarketDataProvider.load_ohlc_range не реализован. "
+            "CandleCacheService пока поддерживает только t_invest для точечной догрузки. "
+            "Используйте load_ohlc для полной загрузки через history_period."
+        )

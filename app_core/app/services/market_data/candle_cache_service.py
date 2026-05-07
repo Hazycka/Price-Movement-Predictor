@@ -1,0 +1,245 @@
+﻿"""
+CandleCacheService — сервис кеширования рыночных свечей в БД.
+
+Логика работы:
+  1. Конвертируем history_period + history_up_to → конкретные даты [from_dt, to_dt]
+  2. Читаем покрытия из БД для (ticker, source, interval)
+  3. Вычисляем непокрытые диапазоны внутри [from_dt, to_dt]
+  4. Для каждого непокрытого диапазона — запрашиваем провайдера
+  5. Сохраняем новые свечи + обновляем покрытие в одной транзакции (атомарно)
+  6. Читаем финальный результат из БД и возвращаем
+
+Атомарность:
+  upsert_candles_batch + upsert_coverage — в одном UnitOfWork блоке.
+  Если процесс упадёт — оба изменения откатятся вместе.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import timezone
+
+import pandas as pd
+
+from .base import MarketDataRequest
+from .factory import get_market_data_provider
+from ...storage import get_uow_factory
+from ...storage.ports import CandleRow
+from ...schemas import ProviderOptions, TInvestProviderOptions, YahooProviderOptions
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_history_period(period: str) -> pd.DateOffset:
+    value = int(period[:-1])
+    unit = period[-1]
+    if unit == "d":
+        return pd.DateOffset(days=value)
+    if unit == "w":
+        return pd.DateOffset(weeks=value)
+    if unit == "m":
+        return pd.DateOffset(months=value)
+    if unit == "y":
+        return pd.DateOffset(years=value)
+    raise ValueError(f"Неподдерживаемый формат history_period: {period}")
+
+
+def _resolve_date_range(history_period: str, history_up_to: str | None) -> tuple[str, str]:
+    """
+    Конвертирует history_period + history_up_to в конкретные даты.
+    Возвращает (from_dt, to_dt) в формате ISO строк.
+    """
+    if history_up_to:
+        to_dt = pd.to_datetime(history_up_to, utc=True)
+    else:
+        to_dt = pd.Timestamp.now(tz=timezone.utc)
+
+    from_dt = to_dt - _parse_history_period(history_period)
+
+    return from_dt.isoformat(), to_dt.isoformat()
+
+
+def _find_missing_ranges(
+        coverage: list,
+        from_dt: str,
+        to_dt: str,
+) -> list[tuple[str, str]]:
+    """
+    Находит непокрытые диапазоны внутри [from_dt, to_dt].
+
+    Пример:
+      Запрошено:  [2022-01-01 ........... 2025-01-01]
+      Покрыто:    [2022-01-01 .. 2023-06-01]  [2024-01-01 .. 2025-01-01]
+      Пропуск:                  [2023-06-01 .. 2024-01-01]
+    """
+    if not coverage:
+        return [(from_dt, to_dt)]
+
+    missing = []
+    cursor = from_dt
+
+    for cov in coverage:
+        if cov.to_dt <= cursor:
+            # Это покрытие уже позади курсора — пропускаем
+            continue
+        if cov.from_dt > cursor:
+            # Дыра между курсором и началом покрытия
+            gap_end = min(cov.from_dt, to_dt)
+            missing.append((cursor, gap_end))
+        # Двигаем курсор за конец покрытия
+        cursor = max(cursor, cov.to_dt)
+        if cursor >= to_dt:
+            break
+
+    # Хвост после всех покрытий
+    if cursor < to_dt:
+        missing.append((cursor, to_dt))
+
+    return missing
+
+
+def _source_from_provider(provider: str) -> str:
+    """Нормализует название провайдера в строку источника для БД."""
+    normalized = provider.strip().lower()
+    if normalized in ("t_invest", "tinvest"):
+        return "t_invest"
+    if normalized == "yfinance":
+        return "yfinance"
+    return normalized
+
+
+def _ticker_from_options(provider_options: ProviderOptions) -> str:
+    if isinstance(provider_options, TInvestProviderOptions | YahooProviderOptions):
+        return (provider_options.ticker or "").upper()
+    return "unknown"
+
+
+class CandleCacheService:
+    """
+    Сервис кеширования свечей. Стоит между провайдерами данных и сервисами прогноза.
+    Провайдер остаётся чистым — он только загружает данные, не знает о кеше.
+    """
+
+    def load_ohlc(
+            self,
+            history_period: str,
+            interval: str,
+            provider_options: ProviderOptions,
+            history_up_to: str | None = None,
+            provider: str = "t_invest",
+    ) -> tuple[list[str], list[dict[str, float]]]:
+
+        source = _source_from_provider(provider)
+        ticker = _ticker_from_options(provider_options)
+        from_dt, to_dt = _resolve_date_range(history_period, history_up_to)
+
+        logger.info(
+            "[CandleCache] Запрос: ticker=%s source=%s interval=%s [%s → %s]",
+            ticker, source, interval,
+            from_dt[:10], to_dt[:10],
+        )
+
+        uow_factory = get_uow_factory()
+
+        # --- Шаг 1: читаем покрытие из БД ---
+        with uow_factory() as uow:
+            coverage = uow.candle_repository.get_coverage(ticker, source, interval)
+
+        logger.info(
+            "[CandleCache] Покрытий в БД: %d диапазонов",
+            len(coverage),
+        )
+
+        # --- Шаг 2: находим что нужно дозапросить ---
+        missing = _find_missing_ranges(coverage, from_dt, to_dt)
+
+        if not missing:
+            logger.info("[CandleCache] ✓ Все данные есть в БД — провайдер не нужен")
+        else:
+            logger.info(
+                "[CandleCache] Непокрытых диапазонов: %d — дозапрашиваем у провайдера",
+                len(missing),
+            )
+
+        # --- Шаг 3: дозапрашиваем непокрытые диапазоны ---
+        data_provider = get_market_data_provider(provider)
+
+        for range_from, range_to in missing:
+            logger.info(
+                "[CandleCache] → Запрос к провайдеру: [%s → %s]",
+                range_from[:10], range_to[:10],
+            )
+
+            try:
+                request = MarketDataRequest(
+                    provider_options=provider_options,
+                    history_period=history_period,
+                    interval=interval,
+                    history_up_to=range_to[:10],
+                )
+                # Переопределяем period под конкретный диапазон
+                # путём передачи from/to через history_up_to + вычисленный период
+                dates, candles = data_provider.load_ohlc_range(
+                    provider_options=provider_options,
+                    interval=interval,
+                    from_dt=range_from,
+                    to_dt=range_to,
+                )
+            except Exception as ex:
+                logger.error(
+                    "[CandleCache] ✗ Ошибка загрузки диапазона [%s → %s]: %s",
+                    range_from[:10], range_to[:10], ex,
+                )
+                raise
+
+            if not candles:
+                logger.warning(
+                    "[CandleCache] ⚠ Провайдер вернул 0 свечей для [%s → %s] — диапазон всё равно помечаем покрытым",
+                    range_from[:10], range_to[:10],
+                )
+
+            # --- Шаг 4: сохраняем атомарно (свечи + покрытие) ---
+            candle_rows = [
+                CandleRow(
+                    ticker=ticker,
+                    source=source,
+                    interval=interval,
+                    timestamp=dates[i],
+                    open=candles[i]["open"],
+                    high=candles[i]["high"],
+                    low=candles[i]["low"],
+                    close=candles[i]["close"],
+                    volume=candles[i].get("volume", 0.0),
+                )
+                for i in range(len(candles))
+            ]
+
+            with uow_factory() as uow:
+                uow.candle_repository.upsert_candles_batch(ticker, source, interval, candle_rows)
+                uow.candle_repository.upsert_coverage(ticker, source, interval, range_from, range_to)
+                # __exit__ → commit — оба изменения атомарны
+
+            logger.info(
+                "[CandleCache] ✓ Сохранено: %d свечей, покрытие [%s → %s]",
+                len(candle_rows), range_from[:10], range_to[:10],
+            )
+
+        # --- Шаг 5: читаем финальный результат из БД ---
+        with uow_factory() as uow:
+            result_rows = uow.candle_repository.get_candles(ticker, source, interval, from_dt, to_dt)
+
+        logger.info(
+            "[CandleCache] ✓ Итого свечей из БД: %d",
+            len(result_rows),
+        )
+
+        if not result_rows:
+            return [], []
+
+        dates_out = [r.timestamp for r in result_rows]
+        candles_out = [
+            {"open": r.open, "high": r.high, "low": r.low,
+             "close": r.close, "volume": r.volume}
+            for r in result_rows
+        ]
+
+        return dates_out, candles_out

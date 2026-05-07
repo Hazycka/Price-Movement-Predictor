@@ -1,6 +1,6 @@
 ﻿import os
 import numpy as np
-from .base import ForecastModel
+from .base import ForecastModel, QuantileForecast, OHLCQuantileForecast
 
 
 class ChronosForecastModel(ForecastModel):
@@ -23,7 +23,6 @@ class ChronosForecastModel(ForecastModel):
     def _ensure_loaded(self) -> None:
         if self.is_loaded and self._pipeline is not None:
             return
-
         try:
             import torch
             from chronos import ChronosPipeline
@@ -36,7 +35,6 @@ class ChronosForecastModel(ForecastModel):
                 device_map=self.device,
                 dtype=dtype_
             )
-
             self.is_loaded = True
             self.load_error = None
         except Exception as ex:
@@ -45,60 +43,102 @@ class ChronosForecastModel(ForecastModel):
             self.load_error = str(ex)
             raise RuntimeError(f"Не удалось загрузить Chronos модель '{self.model_id}': {ex}") from ex
 
-    def predict(self, series: list[float], horizon: int, context: dict | None = None) -> list[float]:
-        if not series:
-            raise ValueError("Input series is empty.")
-        if horizon <= 0:
-            raise ValueError("horizon must be > 0.")
+    def _run_inference(self, close_series: list[float], horizon: int, num_samples: int) -> list[float]:
+        import torch
+        ts = torch.tensor(close_series, dtype=torch.float32)
+        forecast = self._pipeline.predict(
+            inputs=ts,
+            prediction_length=horizon,
+            num_samples=num_samples
+        )
+        arr = forecast.detach().cpu().numpy() if hasattr(forecast, "detach") else np.asarray(forecast)
+        arr = np.squeeze(arr)
+        while arr.ndim > 2:
+            arr = arr[0]
 
-        self._ensure_loaded()
+        if arr.ndim == 1:
+            point = arr
+        elif arr.ndim == 2:
+            point = np.median(arr, axis=0)
+        else:
+            raise RuntimeError(f"Неожиданная форма прогноза Chronos: {arr.shape}")
 
-        try:
-            import torch
+        result = [float(x) for x in point.tolist()]
+        if len(result) != horizon:
+            result = result[:horizon]
+            if len(result) < horizon and result:
+                result.extend([result[-1]] * (horizon - len(result)))
+        return result
 
-            prediction_samples = self.num_samples
-            if context and isinstance(context.get("num_samples"), int):
-                prediction_samples = max(1, int(context["num_samples"]))
+    # ------------------------------------------------------------------
+    # Реализованные методы
+    # ------------------------------------------------------------------
 
-            ts = torch.tensor(series, dtype=torch.float32)
-
-            forecast = self._pipeline.predict(
-                inputs=ts,
-                prediction_length=horizon,
-                num_samples=prediction_samples
-            )
-
-            arr = forecast.detach().cpu().numpy() if hasattr(forecast, "detach") else np.asarray(forecast)
-            arr = np.squeeze(arr)
-
-            while arr.ndim > 2:
-                arr = arr[0]
-
-            if arr.ndim == 1:
-                point_forecast = arr
-            elif arr.ndim == 2:
-                point_forecast = np.median(arr, axis=0)
-            else:
-                raise RuntimeError(f"Неожиданная форма прогноза Chronos: {arr.shape}")
-
-            result = [float(x) for x in point_forecast.tolist()]
-            if len(result) != horizon:
-                result = result[:horizon]
-                if len(result) < horizon and result:
-                    result.extend([result[-1]] * (horizon - len(result)))
-
-            return result
-        except Exception as ex:
-            raise RuntimeError(f"Ошибка инференса Chronos: {ex}") from ex
-
-    def predict_multivariate(
+    def predict_line_exact(
             self,
             candles: list[dict[str, float]],
             horizon: int,
             context: dict | None = None
     ) -> list[float]:
-        close_series = [float(candle["close"]) for candle in candles]
-        return self.predict(series=close_series, horizon=horizon, context=context)
+        if not candles:
+            raise ValueError("Input candles are empty.")
+        if horizon <= 0:
+            raise ValueError("horizon must be > 0.")
+
+        self._ensure_loaded()
+
+        num_samples = self.num_samples
+        model_options = context.get("model_options") if context else None
+        if model_options is not None and hasattr(model_options, "num_samples"):
+            num_samples = max(1, int(model_options.num_samples))
+
+        try:
+            close_series = [float(c["close"]) for c in candles]
+            return self._run_inference(close_series, horizon, num_samples)
+        except Exception as ex:
+            raise RuntimeError(f"Ошибка инференса Chronos: {ex}") from ex
+
+    # ------------------------------------------------------------------
+    # Заглушки неподдерживаемых методов
+    # ------------------------------------------------------------------
+
+    def predict_line_quantiles(
+            self,
+            candles: list[dict[str, float]],
+            horizon: int,
+            context: dict | None = None
+    ) -> QuantileForecast:
+        raise NotImplementedError(
+            "Chronos не поддерживает квантильный прогноз. "
+            "Используйте модель с quantile head (например PatchTST FM). "
+            "TODO: реализовать через bootstrap по num_samples — Chronos внутри "
+            "уже делает сэмплирование, квантили можно получить честно из "
+            "distribution по оси samples."
+        )
+
+    def predict_ohlc_exact(
+            self,
+            candles: list[dict[str, float]],
+            horizon: int,
+            context: dict | None = None
+    ) -> list[dict[str, float]]:
+        raise NotImplementedError(
+            "Chronos не поддерживает OHLC прогноз — модель является "
+            "univariate close-only. Используйте модель с multivariate поддержкой "
+            "(например PatchTST FM)."
+        )
+
+    def predict_ohlc_quantiles(
+            self,
+            candles: list[dict[str, float]],
+            horizon: int,
+            context: dict | None = None
+    ) -> OHLCQuantileForecast:
+        raise NotImplementedError(
+            "Chronos не поддерживает OHLC квантильный прогноз — модель является "
+            "univariate close-only без quantile head. "
+            "Используйте PatchTST FM или другую модель с полной поддержкой."
+        )
 
     def get_info(self) -> dict:
         return {
@@ -109,5 +149,7 @@ class ChronosForecastModel(ForecastModel):
             "device": self.device,
             "num_samples": self.num_samples,
             "type": "close-only-forecast-model",
+            "supports_quantiles": False,
+            "supports_ohlc": False,
             "load_error": self.load_error
         }

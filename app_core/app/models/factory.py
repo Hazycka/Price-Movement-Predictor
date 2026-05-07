@@ -10,7 +10,11 @@ def create_model(model_name: str | None = None) -> ForecastModel:
 
     if name == "chronos":
         return ChronosForecastModel()
+
     if name == "patchtst":
         return PatchTSTForecastModel()
 
-    raise ValueError(f"Неизвестная модель '{name}'. Поддерживается: chronos, patchtst")
+    raise ValueError(
+        f"Неизвестная модель '{name}'. "
+        f"Поддерживается: chronos, patchtst"
+    )

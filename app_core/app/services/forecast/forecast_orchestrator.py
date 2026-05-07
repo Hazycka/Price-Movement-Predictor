@@ -1,5 +1,5 @@
 ﻿from ..chart import calculate_indicators
-from ...schemas import ForecastResponse
+from ...schemas import ForecastResponse, OHLCQuantileForecastSchema, QuantileForecastSchema
 
 
 class ForecastOrchestrator:
@@ -24,21 +24,70 @@ class ForecastOrchestrator:
 
         context = self.context_builder.build(request)
 
+        # ------------------------------------------------------------------
+        # Выбор метода прогноза по запрошенному chart_type_forecast.
+        # ------------------------------------------------------------------
+
+        forecast_ohlc_quantiles: OHLCQuantileForecastSchema | None = None
+
         if request.chart_type_forecast == "candlestick":
-            forecast_candles = self.model.predict_ohlc_multivariate(
-                candles=candles,
-                horizon=request.horizon,
-                context=context
+            # Основной и предпочтительный путь — OHLC с квантилями.
+            # Модели без поддержки поднимают NotImplementedError → HTTP 400.
+            try:
+                qf = self.model.predict_ohlc_quantiles(
+                    candles=candles,
+                    horizon=request.horizon,
+                    context=context
+                )
+            except NotImplementedError as ex:
+                raise ValueError(
+                    f"Модель '{self.model.get_info().get('name')}' не поддерживает "
+                    f"режим candlestick прогноза с квантилями. "
+                    f"Используйте chart_type_forecast='line' или выберите другую модель. "
+                    f"Детали: {ex}"
+                ) from ex
+
+            # Конвертируем dataclass → pydantic schema для ответа
+            forecast_ohlc_quantiles = OHLCQuantileForecastSchema(
+                open=QuantileForecastSchema(**qf.open.to_dict()),
+                high=QuantileForecastSchema(**qf.high.to_dict()),
+                low=QuantileForecastSchema(**qf.low.to_dict()),
+                close=QuantileForecastSchema(**qf.close.to_dict()),
+                volume=QuantileForecastSchema(**qf.volume.to_dict()) if qf.volume is not None else None,
             )
+
+            # Медианные свечи как основной прогноз для отображения
+            forecast_candles = qf.median_candles()
+
         elif request.chart_type_forecast == "line":
-            forecast_close = self.model.predict_multivariate(
-                candles=candles,
-                horizon=request.horizon,
-                context=context
-            )
-            forecast_candles = [{"open": v, "high": v, "low": v, "close": v} for v in forecast_close]
+            # Line прогноз — только точечный close, квантили не нужны.
+            try:
+                close_forecast = self.model.predict_line_exact(
+                    candles=candles,
+                    horizon=request.horizon,
+                    context=context
+                )
+            except NotImplementedError as ex:
+                raise ValueError(
+                    f"Модель '{self.model.get_info().get('name')}' не поддерживает "
+                    f"режим line прогноза. "
+                    f"Детали: {ex}"
+                ) from ex
+
+            forecast_candles = [
+                {"open": v, "high": v, "low": v, "close": v}
+                for v in close_forecast
+            ]
+
         else:
-            raise ValueError(f"Неподдерживаемый chart_type_forecast='{request.chart_type_forecast}'.")
+            raise ValueError(
+                f"Неподдерживаемый chart_type_forecast='{request.chart_type_forecast}'. "
+                f"Допустимые значения: 'candlestick', 'line'."
+            )
+
+        # ------------------------------------------------------------------
+        # Метаданные окна модели
+        # ------------------------------------------------------------------
 
         model_info = self.model.get_info()
         window_info = model_info.get("last_input_window_info", {}) if isinstance(model_info, dict) else {}
@@ -64,6 +113,7 @@ class ForecastOrchestrator:
             chart_type_forecast=request.chart_type_forecast,
             candles=candles,
             forecast_candles=forecast_candles,
+            forecast_ohlc_quantiles=forecast_ohlc_quantiles,
             indicators=indicators,
             dates=dates,
             interval=request.interval,

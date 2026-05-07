@@ -2,6 +2,10 @@
 from typing import Any, Literal
 
 
+# ---------------------------------------------------------------------------
+# Provider options
+# ---------------------------------------------------------------------------
+
 class TInvestProviderOptions(BaseModel):
     figi: str | None = Field(default=None, description="FIGI инструмента")
     ticker: str | None = Field(default=None, description="Например: AAPL")
@@ -24,17 +28,72 @@ class CsvProviderOptions(BaseModel):
     volume_column: str | None = Field(default="Volume")
 
 
+# ---------------------------------------------------------------------------
+# Model options
+# ---------------------------------------------------------------------------
+
 class PatchTSTModelOptions(BaseModel):
     pass
 
+class ChronosModelOptions(BaseModel):
+    num_samples: int = Field(
+        default=64, ge=1, le=256,
+        description="Количество сэмплов в вероятностном прогнозе"
+    )
 
 ProviderOptions = TInvestProviderOptions | YahooProviderOptions | CsvProviderOptions
-ModelOptions = PatchTSTModelOptions
+ModelOptions = PatchTSTModelOptions | ChronosModelOptions
 
+
+# ---------------------------------------------------------------------------
+# Quantile schemas
+#
+# QuantileForecastSchema  — квантили одного канала (например close)
+# OHLCQuantileForecastSchema — квантили по всем OHLC каналам + опциональный volume
+# ---------------------------------------------------------------------------
+
+class QuantileForecastSchema(BaseModel):
+    """
+    Квантильный прогноз для одного канала на горизонт N точек.
+    Каждое поле — список длиной horizon.
+
+    [q10, q90] — 80% доверительный интервал (широкий band на графике)
+    [q25, q75] — 50% доверительный интервал (узкий band на графике)
+    q50        — медиана, центральный прогноз
+    """
+    q10: list[float]
+    q25: list[float]
+    q50: list[float]
+    q75: list[float]
+    q90: list[float]
+
+
+class OHLCQuantileForecastSchema(BaseModel):
+    """
+    Квантильный прогноз полной OHLC свечи на горизонт N точек.
+
+    volume: None в zero-shot режиме.
+    Заполняется после дообучения модели на конкретном инструменте.
+    """
+    open:   QuantileForecastSchema
+    high:   QuantileForecastSchema
+    low:    QuantileForecastSchema
+    close:  QuantileForecastSchema
+    volume: QuantileForecastSchema | None = Field(
+        default=None,
+        description="None в zero-shot. Заполняется после дообучения на объёме."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Forecast request / response
+# ---------------------------------------------------------------------------
 
 class ForecastRequest(BaseModel):
-    model_name: Literal["chronos", "patchtst"] | None = Field(default=None,
-                                                              description="Выбор модели для конкретного запроса")
+    model_name: Literal["chronos", "patchtst"] | None = Field(
+        default=None,
+        description="Выбор модели для конкретного запроса"
+    )
     model_options: ModelOptions | None = Field(default=None)
 
     data_source: Literal["yfinance", "t_invest", "csv"] = Field(default="t_invest")
@@ -42,16 +101,16 @@ class ForecastRequest(BaseModel):
 
     chart_type_history: Literal["line", "candlestick"] = Field(default="candlestick")
     chart_type_forecast: Literal["line", "candlestick"] = Field(default="candlestick")
-    horizon: int = Field(default=5, ge=1, le=60)
+    horizon: int = Field(default=5, ge=1, le=64)
     history_period: str = Field(default="1y", description="Период для истории, например 6mo, 1y, 2y")
     history_up_to: str | None = Field(default=None, description="Дата конца окна истории, например 2026-03-20")
     interval: str = Field(default="1d", description="Интервал данных, например 1d, 1h")
 
     indicators: list[str] = Field(default_factory=lambda: ["sma_20", "ema_20", "rsi_14"])
-    num_samples: int = Field(default=64, ge=1, le=256,
-                             description="Количество сэмплов в вероятностном прогнозе Chronos")
-    feature_plugins: list[str] = Field(default_factory=list,
-                                       description="Список feature-плагинов для multivariate моделей")
+    feature_plugins: list[str] = Field(
+        default_factory=list,
+        description="Список feature-плагинов для multivariate моделей"
+    )
 
     @model_validator(mode="after")
     def validate_options(self):
@@ -82,7 +141,17 @@ class ForecastResponse(BaseModel):
     chart_type_history: Literal["line", "candlestick"]
     chart_type_forecast: Literal["line", "candlestick"]
     candles: list[dict[str, float]]
+
+    # Медианные свечи прогноза (q50 по каждому каналу)
     forecast_candles: list[dict[str, float]]
+
+    # Квантильный прогноз OHLC — основной результат.
+    # None если модель не поддерживает квантили (например Chronos-заглушка).
+    forecast_ohlc_quantiles: OHLCQuantileForecastSchema | None = Field(
+        default=None,
+        description="Квантильный прогноз OHLC. None если модель не поддерживает."
+    )
+
     indicators: dict[str, list[float | None]]
     dates: list[str]
     interval: str
@@ -91,9 +160,15 @@ class ForecastResponse(BaseModel):
     metadata: dict[str, Any]
 
 
+# ---------------------------------------------------------------------------
+# Backtest request / response
+# ---------------------------------------------------------------------------
+
 class BacktestRequest(BaseModel):
-    model_name: Literal["chronos", "patchtst"] | None = Field(default=None,
-                                                              description="Выбор модели для конкретного запроса")
+    model_name: Literal["chronos", "patchtst"] | None = Field(
+        default=None,
+        description="Выбор модели для конкретного запроса"
+    )
     model_options: ModelOptions | None = Field(default=None)
 
     data_source: Literal["yfinance", "t_invest", "csv"] = Field(default="t_invest")
@@ -106,7 +181,6 @@ class BacktestRequest(BaseModel):
     interval: str = Field(default="1d")
 
     horizon: int = Field(default=5, ge=1, le=60)
-    num_samples: int = Field(default=64, ge=1, le=256)
     feature_plugins: list[str] = Field(
         default_factory=list,
         description="Список feature-плагинов для multivariate моделей"

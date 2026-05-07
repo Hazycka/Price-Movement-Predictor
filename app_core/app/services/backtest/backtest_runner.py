@@ -1,4 +1,6 @@
-﻿from ...schemas import BacktestResponse
+﻿import math
+
+from ...schemas import BacktestResponse
 from .window_usage import ModelWindowUsageExtractor
 from .metrics import BacktestMetrics
 
@@ -12,8 +14,8 @@ class BacktestRunner:
         close_series = [candle["close"] for candle in candles]
         if len(close_series) < request.min_train_size + request.horizon:
             raise ValueError(
-                f"Недостаточно данных для бэктеста: нужно минимум {request.min_train_size + request.horizon}, "
-                f"получено {len(close_series)}."
+                f"Недостаточно данных для бэктеста: нужно минимум "
+                f"{request.min_train_size + request.horizon}, получено {len(close_series)}."
             )
 
         if request.backtest_target == "close":
@@ -27,8 +29,8 @@ class BacktestRunner:
         required_context_length_seen = None
         all_abs, all_sq, all_pct = [], [], []
         details = []
-
         windows_used = 0
+
         start_train_end = request.min_train_size
         last_train_end = len(close_series) - request.horizon
 
@@ -38,16 +40,24 @@ class BacktestRunner:
 
             train_candles = candles[:train_end]
             actual = close_series[train_end:train_end + request.horizon]
-            forecast = self.model.predict_multivariate(
-                candles=train_candles,
-                horizon=request.horizon,
-                context={
-                    "num_samples": request.num_samples,
-                    "feature_plugins": request.feature_plugins,
-                    "mode": "backtest",
-                    "backtest_target": "close"
-                }
-            )
+
+            try:
+                forecast = self.model.predict_line_exact(
+                    candles=train_candles,
+                    horizon=request.horizon,
+                    context={
+                        "num_samples": request.num_samples,
+                        "feature_plugins": request.feature_plugins,
+                        "mode": "backtest",
+                        "backtest_target": "close"
+                    }
+                )
+            except NotImplementedError as ex:
+                raise ValueError(
+                    f"Модель '{self.model.get_info().get('name')}' не поддерживает "
+                    f"backtest_target='close'. Используйте backtest_target='ohlc'. "
+                    f"Детали: {ex}"
+                ) from ex
 
             if len(forecast) != len(actual):
                 min_len = min(len(forecast), len(actual))
@@ -76,7 +86,6 @@ class BacktestRunner:
             })
             windows_used += 1
 
-        import math
         mae = float(sum(all_abs) / len(all_abs)) if all_abs else 0.0
         rmse = float(math.sqrt(sum(all_sq) / len(all_sq))) if all_sq else 0.0
         mape = float(sum(all_pct) / len(all_pct)) if all_pct else 0.0
@@ -112,8 +121,8 @@ class BacktestRunner:
         all_sq = {ch: [] for ch in channels}
         all_pct = {ch: [] for ch in channels}
         details = []
-
         windows_used = 0
+
         start_train_end = request.min_train_size
         last_train_end = len(close_series) - request.horizon
 
@@ -123,16 +132,27 @@ class BacktestRunner:
 
             train_candles = candles[:train_end]
             actual_ohlc = candles[train_end:train_end + request.horizon]
-            forecast_ohlc = self.model.predict_ohlc_multivariate(
-                candles=train_candles,
-                horizon=request.horizon,
-                context={
-                    "num_samples": request.num_samples,
-                    "feature_plugins": request.feature_plugins,
-                    "mode": "backtest",
-                    "backtest_target": "ohlc"
-                }
-            )
+
+            # Бэктест использует медианные свечи из ohlc_quantiles
+            # как точечный прогноз для расчёта метрик
+            try:
+                qf = self.model.predict_ohlc_quantiles(
+                    candles=train_candles,
+                    horizon=request.horizon,
+                    context={
+                        "num_samples": request.num_samples,
+                        "feature_plugins": request.feature_plugins,
+                        "mode": "backtest",
+                        "backtest_target": "ohlc"
+                    }
+                )
+                forecast_ohlc = qf.median_candles()
+            except NotImplementedError as ex:
+                raise ValueError(
+                    f"Модель '{self.model.get_info().get('name')}' не поддерживает "
+                    f"backtest_target='ohlc'. Используйте backtest_target='close'. "
+                    f"Детали: {ex}"
+                ) from ex
 
             if len(forecast_ohlc) != len(actual_ohlc):
                 min_len = min(len(forecast_ohlc), len(actual_ohlc))
@@ -165,7 +185,6 @@ class BacktestRunner:
             })
             windows_used += 1
 
-        import math
         global_by_channel = {
             ch: {
                 "mae": float(sum(all_abs[ch]) / len(all_abs[ch])) if all_abs[ch] else 0.0,
@@ -185,18 +204,7 @@ class BacktestRunner:
                 "mae_mean_ohlc": mae_mean_ohlc,
                 "rmse_mean_ohlc": rmse_mean_ohlc,
                 "mape_mean_ohlc": mape_mean_ohlc,
-                "mae_open": global_by_channel["open"]["mae"],
-                "rmse_open": global_by_channel["open"]["rmse"],
-                "mape_open": global_by_channel["open"]["mape"],
-                "mae_high": global_by_channel["high"]["mae"],
-                "rmse_high": global_by_channel["high"]["rmse"],
-                "mape_high": global_by_channel["high"]["mape"],
-                "mae_low": global_by_channel["low"]["mae"],
-                "rmse_low": global_by_channel["low"]["rmse"],
-                "mape_low": global_by_channel["low"]["mape"],
-                "mae_close": global_by_channel["close"]["mae"],
-                "rmse_close": global_by_channel["close"]["rmse"],
-                "mape_close": global_by_channel["close"]["mape"]
+                **{f"{m}_{ch}": global_by_channel[ch][m] for ch in channels for m in ("mae", "rmse", "mape")}
             },
             windows_count=windows_used,
             horizon=request.horizon,

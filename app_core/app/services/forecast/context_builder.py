@@ -5,7 +5,7 @@
             "indicators_enabled": request.indicators,
             "chart_type_history": request.chart_type_history,
             "chart_type_forecast": request.chart_type_forecast,
-            "num_samples": request.num_samples,
+            "model_options": request.model_options,
             "feature_plugins": request.feature_plugins,
             "future_extensions": {
                 "feature_plugins": True,
