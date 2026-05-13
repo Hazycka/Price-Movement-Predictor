@@ -157,3 +157,38 @@ class ForecastModel(ABC):
 
     def fit_adapter(self, data, config: dict | None = None) -> None:
         return None
+
+    # ------------------------------------------------------------------
+    # Опциональные батчевые методы (для ускорения walk-forward бэктеста)
+    #
+    # Дефолтная реализация — sequential loop через одноразовые методы.
+    # Модели, способные к настоящему батчингу (например PatchTST FM с
+    # multi-series pipeline), переопределяют их для прогона нескольких
+    # окон ОДНИМ forward pass'ом на GPU.
+    #
+    # Все candles_list[i] должны иметь ОДИНАКОВУЮ длину (один контекст) —
+    # иначе нельзя сложить в один тензор. Caller отвечает за это.
+    # ------------------------------------------------------------------
+
+    def predict_ohlc_quantiles_batch(
+            self,
+            candles_list: list[list[dict[str, float]]],
+            horizon: int,
+            context: dict | None = None,
+    ) -> list[OHLCQuantileForecast]:
+        """
+        Батчевый OHLC квантильный прогноз. По умолчанию — sequential.
+        Модели, поддерживающие настоящий батчинг, должны переопределить.
+        """
+        return [self.predict_ohlc_quantiles(c, horizon, context) for c in candles_list]
+
+    def predict_line_exact_batch(
+            self,
+            candles_list: list[list[dict[str, float]]],
+            horizon: int,
+            context: dict | None = None,
+    ) -> list[list[float]]:
+        """
+        Батчевый точечный прогноз close. По умолчанию — sequential.
+        """
+        return [self.predict_line_exact(c, horizon, context) for c in candles_list]

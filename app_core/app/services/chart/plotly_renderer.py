@@ -49,9 +49,6 @@ def _make_category_labels(dates: list, prefix: str = "") -> list[str]:
     return [f"{prefix}{i}" for i in range(len(dates))]
 
 
-def _candle_direction(close: float, prev_close: float) -> str:
-    return "bull" if close >= prev_close else "bear"
-
 
 def _add_history(
         fig: go.Figure,
@@ -136,7 +133,6 @@ def _add_quantile_candles(
         show_legend: bool,
 ) -> None:
     horizon = len(forecast_candles)
-    prev_closes = [last_history_close] + [forecast_candles[i]["close"] for i in range(horizon - 1)]
 
     layers = [
         ("light",  label_low,  quantiles_low),
@@ -151,7 +147,7 @@ def _add_quantile_candles(
 
     for role, label, ohlc in layers:
         if role == "median":
-            increasing = dict(line=dict(color=BULL_MEDIAN, width=1.5), fillcolor="rgba(0,0,0,0)")
+            increasing = dict(line=dict(color=BULL_MEDIAN, width=1.5), fillcolor=BULL_MEDIAN)
             decreasing = dict(line=dict(color=BEAR_MEDIAN, width=1.5), fillcolor="rgba(0,0,0,0)")
         else:
             fill      = BULL_LIGHT if role == "light" else BULL_DARK

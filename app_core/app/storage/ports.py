@@ -82,13 +82,38 @@ class CoverageRange:
 
 
 @dataclass
-class TickerInfo:
+class UnavailableRange:
+    """
+    Диапазон, за который провайдер вернул пустой ответ или ошибку.
+    Эфемерный — повторно проверяется при каждом запросе того же диапазона.
+    """
     ticker: str
     source: str
     interval: str
     from_dt: str
     to_dt: str
+    reason: str
+    recorded_at: str
+
+
+@dataclass
+class TickerInfo:
+    """
+    Сводка по инструменту в локальной БД.
+
+    coverage_periods    — все диапазоны где у нас есть свечи. Может быть
+                          несколько фрагментов с гэпами между ними.
+    unavailable_periods — диапазоны где провайдер не вернул данные.
+    candles_count       — общее число свечей в market_candles по ключу
+                          (ticker, source, interval), может быть >0
+                          даже если coverage_periods пуст (orphan-свечи).
+    """
+    ticker: str
+    source: str
+    interval: str
     candles_count: int
+    coverage_periods: list[CoverageRange]
+    unavailable_periods: list[UnavailableRange]
 
 
 class CandleRepositoryPort(Protocol):
@@ -156,8 +181,162 @@ class CandleRepositoryPort(Protocol):
     def get_available_tickers(self) -> list[TickerInfo]:
         """
         Возвращает список всех доступных инструментов с метаданными.
-        Используется эндпоинтом GET /market/tickers.
+        Каждый TickerInfo включает список unavailable_periods — диапазонов,
+        за которые провайдер не вернул данных. Используется эндпоинтом GET /market/tickers.
         """
+        ...
+
+    # ------------------------------------------------------------------
+    # Unavailable ranges
+    #
+    # Хранят диапазоны, за которые провайдер вернул пустой ответ.
+    # В отличие от candle_coverage — эфемерны: при следующем запросе
+    # того же диапазона провайдер опрашивается снова (вдруг данные
+    # появились). Если опять пусто — recorded_at обновляется.
+    # ------------------------------------------------------------------
+
+    def upsert_unavailable_range(
+            self,
+            ticker: str,
+            source: str,
+            interval: str,
+            from_dt: str,
+            to_dt: str,
+            reason: str,
+    ) -> None:
+        """
+        Записывает или обновляет диапазон, за который провайдер вернул пустой ответ.
+        При совпадающем (ticker, source, interval, from_dt, to_dt) обновляет reason
+        и recorded_at — это позволяет видеть когда последний раз пытались получить данные.
+        """
+        ...
+
+    def get_unavailable_ranges(
+            self,
+            ticker: str,
+            source: str,
+            interval: str,
+    ) -> list[UnavailableRange]:
+        """
+        Возвращает все недоступные диапазоны для (ticker, source, interval).
+        Отсортированы по from_dt ASC.
+        """
+        ...
+
+    def delete_unavailable_range_overlap(
+            self,
+            ticker: str,
+            source: str,
+            interval: str,
+            from_dt: str,
+            to_dt: str,
+    ) -> None:
+        """
+        Удаляет все unavailable-записи, пересекающиеся с диапазоном [from_dt, to_dt].
+        Вызывается когда провайдер вернул реальные данные за этот диапазон —
+        предыдущая отметка о недоступности больше не актуальна.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Backtest Runs Repository
+#
+# Хранит результаты walk-forward бэктестов (одиночных и в составе sweep).
+# Главные сценарии использования:
+#   1. После любого /backtest (с persist=True) — сохраняем один run
+#   2. /backtest/sweep — сохраняем N primary runs + K*M CV runs со связями
+#   3. Просмотр истории / выбор лучшего конфига для тикера
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BacktestRunRecord:
+    """
+    Снапшот одного walk-forward бэктеста (или его CV-фолда).
+
+    Поля идентификации позволяют запросом «найти лучший конфиг для
+    (model, ticker, source, interval, has_lora)» получить нужный run.
+
+    Связи:
+      sweep_id      — None для standalone runs; одинаковый id для всех runs
+                      одного sweep (включая CV-фолды)
+      parent_run_id — для CV-фолдов: ссылка на primary run, который проверяется.
+                      None для primary runs.
+      cv_fold_index — 0..K-1 для CV-фолдов; None для primary runs.
+    """
+    # Идентификация
+    model_name: str
+    ticker: str
+    source: str
+    interval: str
+    has_lora: bool
+    lora_artifact_id: int | None
+
+    # Параметры бэктеста (snapshot)
+    train_window_mode: str
+    train_window_size: int
+    horizon: int
+    step: int
+    backtest_target: str
+    evaluation_weights: str
+    weight_first_to_last_ratio: float
+    bootstrap_iterations: int
+    ci_z_score: float
+    history_period: str
+    history_up_to: str | None
+    history_length: int
+    feature_plugins: list[str]
+
+    # Результаты (JSON-сериализуемые)
+    windows_count: int
+    metrics: dict[str, float]
+    metrics_ci: dict[str, list[float]]
+    metrics_lcb: dict[str, float]
+    metadata: dict[str, Any]
+
+    # Связи и метаданные
+    sweep_id: int | None = None
+    parent_run_id: int | None = None
+    cv_fold_index: int | None = None
+    id: int | None = None                # назначается после save_run
+    created_at: str | None = None         # назначается БД
+
+
+class BacktestRepositoryPort(Protocol):
+    def save_run(self, record: BacktestRunRecord) -> int:
+        """
+        Сохраняет run и возвращает присвоенный id.
+        Также записывает id обратно в record.id для удобства caller'а.
+        """
+        ...
+
+    def get_run(self, run_id: int) -> BacktestRunRecord | None:
+        """Возвращает run по id или None если не найден."""
+        ...
+
+    def get_runs(
+            self,
+            model_name: str | None = None,
+            ticker: str | None = None,
+            source: str | None = None,
+            interval: str | None = None,
+            has_lora: bool | None = None,
+            sweep_id: int | None = None,
+            limit: int = 100,
+            offset: int = 0,
+    ) -> list[BacktestRunRecord]:
+        """
+        Список runs с фильтрами. Все фильтры опциональны.
+        Возвращает в порядке убывания id (новые первыми).
+        """
+        ...
+
+    def get_sweep_runs(self, sweep_id: int) -> list[BacktestRunRecord]:
+        """Все runs одного sweep'а (primary + CV) в порядке создания."""
+        ...
+
+    def get_next_sweep_id(self) -> int:
+        """Возвращает следующий уникальный sweep_id для группировки нового sweep'а."""
         ...
 
 
@@ -169,6 +348,7 @@ class UnitOfWorkPort(Protocol):
     model_registry: ModelRegistryPort
     provider_state: ProviderStatePort
     candle_repository: CandleRepositoryPort
+    backtest_repository: BacktestRepositoryPort
 
     def __enter__(self) -> "UnitOfWorkPort": ...
     def __exit__(self, exc_type, exc, tb) -> None: ...

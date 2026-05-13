@@ -1,11 +1,16 @@
 ﻿from ..market_data import load_ohlc_from_ticker, load_ohlc_from_csv
-from ...schemas import ForecastRequest, BacktestRequest, CsvProviderOptions, TInvestProviderOptions, YahooProviderOptions
+from ...schemas import (
+    ForecastRequest, BacktestRequest, BacktestSweepRequest,
+    CsvProviderOptions, TInvestProviderOptions, YahooProviderOptions,
+)
 
 
 class InputResolver:
 
     @staticmethod
-    def resolve(request: ForecastRequest | BacktestRequest) -> tuple[str, list[str], list[dict[str, float]]]:
+    def resolve(
+            request: ForecastRequest | BacktestRequest | BacktestSweepRequest,
+    ) -> tuple[str, list[str], list[dict[str, float]]]:
         options = request.provider_options
         
         if isinstance(options, CsvProviderOptions):

@@ -40,4 +40,5 @@ class ChartService:
             chart_type_forecast=result.chart_type_forecast,
             interval=result.interval,
             model_input_start_date=result.model_input_start_date_used,
+            max_history_candles=300
         )

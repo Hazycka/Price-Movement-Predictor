@@ -4,6 +4,7 @@ Runtime для ibm-granite/granite-timeseries-patchtst-fm-r1.
 
 QUANTILE_LEVELS = [0.1, 0.25, 0.5, 0.75, 0.9]
 MAX_CONTEXT_LENGTH = 8192
+DEFAULT_PREDICTION_LENGTH = 64
 
 
 class PatchTSTRuntime:
@@ -15,6 +16,7 @@ class PatchTSTRuntime:
         self.model = None
         self.pipeline = None
         self.context_length: int = MAX_CONTEXT_LENGTH
+        self.prediction_length: int = DEFAULT_PREDICTION_LENGTH
         self.num_quantile: int = len(QUANTILE_LEVELS)
         self.quantile_levels: list[float] = QUANTILE_LEVELS
 
@@ -37,6 +39,13 @@ class PatchTSTRuntime:
                 )
             except Exception:
                 self.context_length = MAX_CONTEXT_LENGTH
+
+            try:
+                self.prediction_length = int(
+                    getattr(self.model.config, "prediction_length", DEFAULT_PREDICTION_LENGTH)
+                )
+            except Exception:
+                self.prediction_length = DEFAULT_PREDICTION_LENGTH
 
             self.pipeline = TimeSeriesForecastingPipeline(
                 model=self.model,
