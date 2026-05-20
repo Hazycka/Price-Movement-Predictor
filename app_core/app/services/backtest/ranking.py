@@ -20,6 +20,22 @@ from __future__ import annotations
 _LOWER_IS_BETTER = {"pinball_mean", "pinball_q50", "winkler_q25_q75", "winkler_q10_q90"}
 
 
+def resolve_metric_key(ranking_metric: str, backtest_target: str) -> str:
+    """
+    Резолвит «логическое» имя ranking_metric в фактический ключ из metrics dict.
+
+    Skill-метрика в metrics dict называется по-разному в зависимости от target:
+      target='close' → 'skill_mae'        (для backtest_target='close')
+      target='ohlc'  → 'skill_mae_close'  (для backtest_target='ohlc')
+
+    Юзеру в API мы экспонируем единое имя 'skill' — оно разрешается тут.
+    Остальные метрики (pinball_mean, directional_acc) одинаковы в обоих режимах.
+    """
+    if ranking_metric == "skill":
+        return "skill_mae" if backtest_target == "close" else "skill_mae_close"
+    return ranking_metric
+
+
 def ranking_value(metric_name: str, mean: float) -> float:
     """Значение метрики в шкале «больше = лучше»."""
     return -mean if metric_name in _LOWER_IS_BETTER else mean

@@ -19,6 +19,8 @@ from __future__ import annotations
 from typing import Any
 
 from ...schemas import BacktestResponse
+from ...storage import get_uow_factory
+from ...storage.ports import ModelArtifact
 from .window_usage import ModelWindowUsageExtractor
 from .metrics import BacktestMetrics
 from .weights import compute_weights
@@ -29,6 +31,32 @@ class BacktestRunner:
     def __init__(self, model) -> None:
         self.model = model
         self.window_usage = ModelWindowUsageExtractor(model=model)
+
+    # ------------------------------------------------------------------
+    # Artifact resolution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_artifact(artifact_id: int | None) -> ModelArtifact | None:
+        """
+        Загружает артефакт из БД если задан artifact_id. None → None (base model).
+        Raises ValueError если artifact_id указан, но запись не найдена.
+        """
+        if artifact_id is None:
+            return None
+        with get_uow_factory()() as uow:
+            artifact = uow.model_registry.get_by_id(artifact_id)
+        if artifact is None:
+            raise ValueError(
+                f"artifact_id={artifact_id} не найден в model_artifacts. "
+                f"Проверь GET /artifacts."
+            )
+        if artifact.status != "ready":
+            raise ValueError(
+                f"Артефакт id={artifact_id} имеет статус '{artifact.status}', "
+                f"должен быть 'ready'. Дождись завершения обучения."
+            )
+        return artifact
 
     # ------------------------------------------------------------------
     # Точка входа
@@ -55,10 +83,29 @@ class BacktestRunner:
         """
         close_series = [candle["close"] for candle in candles]
 
+        # --- резолв артефакта (если задан) ---
+        artifact = self._resolve_artifact(getattr(request, "artifact_id", None))
+        # При наличии артефакта train_window_size НАСЛЕДУЕТСЯ из его обучающего
+        # контекста — пользовательский игнорируется (с предупреждением если разные).
+        if artifact is not None and artifact.train_window_size is not None:
+            if request.train_window_size != artifact.train_window_size:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "[backtest] artifact_id=%d обучен на train_window_size=%d, "
+                    "запрос пришёл с %d — переопределяем на значение из артефакта.",
+                    artifact.id, artifact.train_window_size, request.train_window_size,
+                )
+            # Применяем артефакт к модели (мутирует self.model._runtime)
+            from ..training import ArtifactLoader
+            ArtifactLoader().apply(self.model, artifact)
+
         # --- разрешение умолчаний ---
         horizon = request.horizon
         step = request.step if request.step is not None else horizon
-        train_window_size = request.train_window_size
+        train_window_size = (
+            artifact.train_window_size if artifact and artifact.train_window_size
+            else request.train_window_size
+        )
         mode = request.train_window_mode
 
         # --- веса по горизонту ---

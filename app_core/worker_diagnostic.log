@@ -1,0 +1,604 @@
+[pid=23184 t=16:56:46] init_worker: starting init_storage
+[pid=19300 t=16:56:46] init_worker: starting init_storage
+[pid=23184 t=16:56:46] init_worker: done
+[pid=19300 t=16:56:46] init_worker: done
+[pid=23184 t=16:56:46] run_backtest_task START ctx=128
+[pid=23184 t=16:56:46] run_backtest_task ensuring runner ctx=128
+[pid=23184 t=16:56:46] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=23184 t=16:56:46] _ensure_runner: acquired lock, loading model
+[pid=23184 t=16:56:46] _load_runner: importing factories
+[pid=23184 t=16:56:46] _load_runner: create_model(patchtst)
+[pid=23184 t=16:56:46] _load_runner: BacktestRunner init
+[pid=23184 t=16:56:46] _load_runner: done
+[pid=23184 t=16:56:46] _ensure_runner: model loaded, releasing lock
+[pid=23184 t=16:56:46] run_backtest_task calling runner.run ctx=128
+[pid=19300 t=16:56:46] run_backtest_task START ctx=256
+[pid=19300 t=16:56:46] run_backtest_task ensuring runner ctx=256
+[pid=19300 t=16:56:46] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=19300 t=16:56:46] _ensure_runner: acquired lock, loading model
+[pid=19300 t=16:56:46] _load_runner: importing factories
+[pid=19300 t=16:56:46] _load_runner: create_model(patchtst)
+[pid=19300 t=16:56:46] _load_runner: BacktestRunner init
+[pid=19300 t=16:56:46] _load_runner: done
+[pid=19300 t=16:56:46] _ensure_runner: model loaded, releasing lock
+[pid=19300 t=16:56:46] run_backtest_task calling runner.run ctx=256
+[pid=23184 t=16:57:02] run_backtest_task runner.run done ctx=128
+[pid=23184 t=16:57:02] run_backtest_task saving run ctx=128
+[pid=23184 t=16:57:02] run_backtest_task saved run_id=69 ctx=128
+[pid=23184 t=16:57:02] run_backtest_task DONE ctx=128
+[pid=19300 t=16:57:02] run_backtest_task runner.run done ctx=256
+[pid=19300 t=16:57:02] run_backtest_task saving run ctx=256
+[pid=19300 t=16:57:02] run_backtest_task saved run_id=70 ctx=256
+[pid=19300 t=16:57:02] run_backtest_task DONE ctx=256
+[pid=23184 t=16:57:02] run_backtest_task START ctx=512
+[pid=23184 t=16:57:02] run_backtest_task ensuring runner ctx=512
+[pid=23184 t=16:57:02] run_backtest_task calling runner.run ctx=512
+[pid=19300 t=16:57:02] run_backtest_task START ctx=1024
+[pid=19300 t=16:57:02] run_backtest_task ensuring runner ctx=1024
+[pid=19300 t=16:57:02] run_backtest_task calling runner.run ctx=1024
+[pid=19300 t=16:57:11] run_backtest_task runner.run done ctx=1024
+[pid=19300 t=16:57:11] run_backtest_task saving run ctx=1024
+[pid=19300 t=16:57:11] run_backtest_task saved run_id=71 ctx=1024
+[pid=19300 t=16:57:11] run_backtest_task DONE ctx=1024
+[pid=19300 t=16:57:11] run_backtest_task START ctx=2048
+[pid=19300 t=16:57:11] run_backtest_task ensuring runner ctx=2048
+[pid=19300 t=16:57:11] run_backtest_task calling runner.run ctx=2048
+[pid=23184 t=16:57:11] run_backtest_task runner.run done ctx=512
+[pid=23184 t=16:57:11] run_backtest_task saving run ctx=512
+[pid=23184 t=16:57:11] run_backtest_task saved run_id=72 ctx=512
+[pid=23184 t=16:57:11] run_backtest_task DONE ctx=512
+[pid=23184 t=16:57:11] run_backtest_task START ctx=4096
+[pid=23184 t=16:57:11] run_backtest_task ensuring runner ctx=4096
+[pid=23184 t=16:57:11] run_backtest_task calling runner.run ctx=4096
+[pid=23184 t=16:57:20] run_backtest_task runner.run done ctx=4096
+[pid=23184 t=16:57:20] run_backtest_task saving run ctx=4096
+[pid=23184 t=16:57:20] run_backtest_task saved run_id=73 ctx=4096
+[pid=23184 t=16:57:20] run_backtest_task DONE ctx=4096
+[pid=23184 t=16:57:20] run_backtest_task START ctx=8192
+[pid=23184 t=16:57:20] run_backtest_task ensuring runner ctx=8192
+[pid=23184 t=16:57:20] run_backtest_task calling runner.run ctx=8192
+[pid=19300 t=16:57:20] run_backtest_task runner.run done ctx=2048
+[pid=19300 t=16:57:20] run_backtest_task saving run ctx=2048
+[pid=19300 t=16:57:20] run_backtest_task saved run_id=74 ctx=2048
+[pid=19300 t=16:57:20] run_backtest_task DONE ctx=2048
+[pid=23184 t=16:57:24] run_backtest_task runner.run done ctx=8192
+[pid=23184 t=16:57:24] run_backtest_task saving run ctx=8192
+[pid=23184 t=16:57:24] run_backtest_task saved run_id=75 ctx=8192
+[pid=23184 t=16:57:24] run_backtest_task DONE ctx=8192
+[pid=19300 t=16:57:24] run_backtest_task START ctx=5232
+[pid=19300 t=16:57:24] run_backtest_task ensuring runner ctx=5232
+[pid=19300 t=16:57:24] run_backtest_task calling runner.run ctx=5232
+[pid=23184 t=16:57:24] run_backtest_task START ctx=6544
+[pid=23184 t=16:57:24] run_backtest_task ensuring runner ctx=6544
+[pid=23184 t=16:57:24] run_backtest_task calling runner.run ctx=6544
+[pid=23184 t=16:57:32] run_backtest_task runner.run done ctx=6544
+[pid=23184 t=16:57:32] run_backtest_task saving run ctx=6544
+[pid=23184 t=16:57:32] run_backtest_task saved run_id=76 ctx=6544
+[pid=23184 t=16:57:32] run_backtest_task DONE ctx=6544
+[pid=19300 t=16:57:32] run_backtest_task runner.run done ctx=5232
+[pid=19300 t=16:57:32] run_backtest_task saving run ctx=5232
+[pid=19300 t=16:57:32] run_backtest_task saved run_id=77 ctx=5232
+[pid=19300 t=16:57:32] run_backtest_task DONE ctx=5232
+[pid=24248 t=16:59:24] init_worker: starting init_storage
+[pid=24248 t=16:59:24] init_worker: done
+[pid=25668 t=16:59:24] init_worker: starting init_storage
+[pid=25668 t=16:59:24] init_worker: done
+[pid=24248 t=16:59:24] run_backtest_task START ctx=128
+[pid=24248 t=16:59:24] run_backtest_task ensuring runner ctx=128
+[pid=24248 t=16:59:24] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=24248 t=16:59:24] _ensure_runner: acquired lock, loading model
+[pid=24248 t=16:59:24] _load_runner: importing factories
+[pid=24248 t=16:59:24] _load_runner: create_model(patchtst)
+[pid=24248 t=16:59:24] _load_runner: BacktestRunner init
+[pid=24248 t=16:59:24] _load_runner: done
+[pid=24248 t=16:59:24] _ensure_runner: model loaded, releasing lock
+[pid=24248 t=16:59:24] run_backtest_task calling runner.run ctx=128
+[pid=25668 t=16:59:24] run_backtest_task START ctx=256
+[pid=25668 t=16:59:24] run_backtest_task ensuring runner ctx=256
+[pid=25668 t=16:59:24] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=25668 t=16:59:24] _ensure_runner: acquired lock, loading model
+[pid=25668 t=16:59:24] _load_runner: importing factories
+[pid=25668 t=16:59:24] _load_runner: create_model(patchtst)
+[pid=25668 t=16:59:24] _load_runner: BacktestRunner init
+[pid=25668 t=16:59:24] _load_runner: done
+[pid=25668 t=16:59:24] _ensure_runner: model loaded, releasing lock
+[pid=25668 t=16:59:24] run_backtest_task calling runner.run ctx=256
+[pid=24248 t=16:59:47] run_backtest_task runner.run done ctx=128
+[pid=24248 t=16:59:47] run_backtest_task saving run ctx=128
+[pid=24248 t=16:59:47] run_backtest_task saved run_id=81 ctx=128
+[pid=24248 t=16:59:47] run_backtest_task DONE ctx=128
+[pid=24248 t=16:59:47] run_backtest_task START ctx=512
+[pid=24248 t=16:59:47] run_backtest_task ensuring runner ctx=512
+[pid=24248 t=16:59:47] run_backtest_task calling runner.run ctx=512
+[pid=25668 t=16:59:47] run_backtest_task runner.run done ctx=256
+[pid=25668 t=16:59:47] run_backtest_task saving run ctx=256
+[pid=25668 t=16:59:47] run_backtest_task saved run_id=82 ctx=256
+[pid=25668 t=16:59:47] run_backtest_task DONE ctx=256
+[pid=25668 t=16:59:47] run_backtest_task START ctx=1024
+[pid=25668 t=16:59:47] run_backtest_task ensuring runner ctx=1024
+[pid=25668 t=16:59:47] run_backtest_task calling runner.run ctx=1024
+[pid=25668 t=17:00:00] run_backtest_task runner.run done ctx=1024
+[pid=25668 t=17:00:00] run_backtest_task saving run ctx=1024
+[pid=25668 t=17:00:00] run_backtest_task saved run_id=83 ctx=1024
+[pid=25668 t=17:00:00] run_backtest_task DONE ctx=1024
+[pid=25668 t=17:00:00] run_backtest_task START ctx=2048
+[pid=25668 t=17:00:00] run_backtest_task ensuring runner ctx=2048
+[pid=25668 t=17:00:00] run_backtest_task calling runner.run ctx=2048
+[pid=24248 t=17:00:00] run_backtest_task runner.run done ctx=512
+[pid=24248 t=17:00:00] run_backtest_task saving run ctx=512
+[pid=24248 t=17:00:00] run_backtest_task saved run_id=84 ctx=512
+[pid=24248 t=17:00:00] run_backtest_task DONE ctx=512
+[pid=24248 t=17:00:00] run_backtest_task START ctx=4096
+[pid=24248 t=17:00:00] run_backtest_task ensuring runner ctx=4096
+[pid=24248 t=17:00:00] run_backtest_task calling runner.run ctx=4096
+[pid=24248 t=17:00:14] run_backtest_task runner.run done ctx=4096
+[pid=24248 t=17:00:14] run_backtest_task saving run ctx=4096
+[pid=24248 t=17:00:14] run_backtest_task saved run_id=85 ctx=4096
+[pid=24248 t=17:00:14] run_backtest_task DONE ctx=4096
+[pid=25668 t=17:00:14] run_backtest_task runner.run done ctx=2048
+[pid=25668 t=17:00:14] run_backtest_task saving run ctx=2048
+[pid=25668 t=17:00:14] run_backtest_task saved run_id=86 ctx=2048
+[pid=25668 t=17:00:14] run_backtest_task DONE ctx=2048
+[pid=8324 t=17:09:02] init_worker: starting init_storage
+[pid=19068 t=17:09:02] init_worker: starting init_storage
+[pid=8324 t=17:09:02] init_worker: done
+[pid=23000 t=17:09:02] init_worker: starting init_storage
+[pid=23000 t=17:09:02] init_worker: done
+[pid=8324 t=17:09:02] run_backtest_task START ctx=128
+[pid=8324 t=17:09:02] run_backtest_task ensuring runner ctx=128
+[pid=8324 t=17:09:02] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=8324 t=17:09:02] _ensure_runner: acquired lock, loading model
+[pid=8324 t=17:09:02] _load_runner: importing factories
+[pid=8324 t=17:09:02] _load_runner: create_model(patchtst)
+[pid=8324 t=17:09:02] _load_runner: BacktestRunner init
+[pid=8324 t=17:09:02] _load_runner: done
+[pid=8324 t=17:09:02] _ensure_runner: model loaded, releasing lock
+[pid=8324 t=17:09:02] run_backtest_task calling runner.run ctx=128
+[pid=19068 t=17:09:02] init_worker: done
+[pid=23000 t=17:09:02] run_backtest_task START ctx=256
+[pid=23000 t=17:09:02] run_backtest_task ensuring runner ctx=256
+[pid=23000 t=17:09:02] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=23000 t=17:09:02] _ensure_runner: acquired lock, loading model
+[pid=23000 t=17:09:02] _load_runner: importing factories
+[pid=23000 t=17:09:02] _load_runner: create_model(patchtst)
+[pid=23000 t=17:09:02] _load_runner: BacktestRunner init
+[pid=23000 t=17:09:02] _load_runner: done
+[pid=23000 t=17:09:02] _ensure_runner: model loaded, releasing lock
+[pid=23000 t=17:09:02] run_backtest_task calling runner.run ctx=256
+[pid=19068 t=17:09:02] run_backtest_task START ctx=512
+[pid=19068 t=17:09:02] run_backtest_task ensuring runner ctx=512
+[pid=19068 t=17:09:02] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=19068 t=17:09:02] _ensure_runner: acquired lock, loading model
+[pid=19068 t=17:09:02] _load_runner: importing factories
+[pid=19068 t=17:09:02] _load_runner: create_model(patchtst)
+[pid=19068 t=17:09:02] _load_runner: BacktestRunner init
+[pid=19068 t=17:09:02] _load_runner: done
+[pid=19068 t=17:09:02] _ensure_runner: model loaded, releasing lock
+[pid=19068 t=17:09:02] run_backtest_task calling runner.run ctx=512
+[pid=19068 t=17:09:21] run_backtest_task runner.run done ctx=512
+[pid=19068 t=17:09:21] run_backtest_task saving run ctx=512
+[pid=19068 t=17:09:21] run_backtest_task saved run_id=99 ctx=512
+[pid=19068 t=17:09:21] run_backtest_task DONE ctx=512
+[pid=19068 t=17:09:21] run_backtest_task START ctx=1024
+[pid=19068 t=17:09:21] run_backtest_task ensuring runner ctx=1024
+[pid=19068 t=17:09:21] run_backtest_task calling runner.run ctx=1024
+[pid=23000 t=17:09:21] run_backtest_task runner.run done ctx=256
+[pid=23000 t=17:09:21] run_backtest_task saving run ctx=256
+[pid=23000 t=17:09:21] run_backtest_task saved run_id=100 ctx=256
+[pid=23000 t=17:09:21] run_backtest_task DONE ctx=256
+[pid=8324 t=17:09:21] run_backtest_task runner.run done ctx=128
+[pid=8324 t=17:09:21] run_backtest_task saving run ctx=128
+[pid=23000 t=17:09:21] run_backtest_task START ctx=2048
+[pid=23000 t=17:09:21] run_backtest_task ensuring runner ctx=2048
+[pid=23000 t=17:09:21] run_backtest_task calling runner.run ctx=2048
+[pid=8324 t=17:09:21] run_backtest_task saved run_id=101 ctx=128
+[pid=8324 t=17:09:21] run_backtest_task DONE ctx=128
+[pid=8324 t=17:09:21] run_backtest_task START ctx=4096
+[pid=8324 t=17:09:21] run_backtest_task ensuring runner ctx=4096
+[pid=8324 t=17:09:21] run_backtest_task calling runner.run ctx=4096
+[pid=8324 t=17:09:31] run_backtest_task runner.run done ctx=4096
+[pid=8324 t=17:09:31] run_backtest_task saving run ctx=4096
+[pid=8324 t=17:09:31] run_backtest_task saved run_id=102 ctx=4096
+[pid=8324 t=17:09:31] run_backtest_task DONE ctx=4096
+[pid=8324 t=17:09:31] run_backtest_task START ctx=8192
+[pid=8324 t=17:09:31] run_backtest_task ensuring runner ctx=8192
+[pid=8324 t=17:09:31] run_backtest_task calling runner.run ctx=8192
+[pid=23000 t=17:09:32] run_backtest_task runner.run done ctx=2048
+[pid=23000 t=17:09:32] run_backtest_task saving run ctx=2048
+[pid=23000 t=17:09:32] run_backtest_task saved run_id=103 ctx=2048
+[pid=23000 t=17:09:32] run_backtest_task DONE ctx=2048
+[pid=19068 t=17:09:32] run_backtest_task runner.run done ctx=1024
+[pid=19068 t=17:09:32] run_backtest_task saving run ctx=1024
+[pid=19068 t=17:09:32] run_backtest_task saved run_id=104 ctx=1024
+[pid=19068 t=17:09:32] run_backtest_task DONE ctx=1024
+[pid=8324 t=17:09:35] run_backtest_task runner.run done ctx=8192
+[pid=8324 t=17:09:35] run_backtest_task saving run ctx=8192
+[pid=8324 t=17:09:35] run_backtest_task saved run_id=105 ctx=8192
+[pid=8324 t=17:09:35] run_backtest_task DONE ctx=8192
+[pid=23000 t=17:09:35] run_backtest_task START ctx=5232
+[pid=23000 t=17:09:35] run_backtest_task ensuring runner ctx=5232
+[pid=23000 t=17:09:35] run_backtest_task calling runner.run ctx=5232
+[pid=19068 t=17:09:35] run_backtest_task START ctx=6544
+[pid=19068 t=17:09:35] run_backtest_task ensuring runner ctx=6544
+[pid=19068 t=17:09:35] run_backtest_task calling runner.run ctx=6544
+[pid=19068 t=17:09:44] run_backtest_task runner.run done ctx=6544
+[pid=19068 t=17:09:44] run_backtest_task saving run ctx=6544
+[pid=19068 t=17:09:44] run_backtest_task saved run_id=106 ctx=6544
+[pid=19068 t=17:09:44] run_backtest_task DONE ctx=6544
+[pid=23000 t=17:09:44] run_backtest_task runner.run done ctx=5232
+[pid=23000 t=17:09:44] run_backtest_task saving run ctx=5232
+[pid=23000 t=17:09:44] run_backtest_task saved run_id=107 ctx=5232
+[pid=23000 t=17:09:44] run_backtest_task DONE ctx=5232
+[pid=25116 t=04:59:18] init_worker: starting init_storage
+[pid=25116 t=04:59:18] init_worker: done
+[pid=12196 t=04:59:18] init_worker: starting init_storage
+[pid=25116 t=04:59:18] run_backtest_task START ctx=128
+[pid=25116 t=04:59:18] run_backtest_task ensuring runner ctx=128
+[pid=25116 t=04:59:18] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=25116 t=04:59:18] _ensure_runner: acquired lock, loading model
+[pid=25116 t=04:59:18] _load_runner: importing factories
+[pid=12196 t=04:59:18] init_worker: done
+[pid=25116 t=04:59:18] _load_runner: create_model(patchtst)
+[pid=25116 t=04:59:18] _load_runner: BacktestRunner init
+[pid=25116 t=04:59:18] _load_runner: done
+[pid=25116 t=04:59:18] _ensure_runner: model loaded, releasing lock
+[pid=25116 t=04:59:18] run_backtest_task calling runner.run ctx=128
+[pid=22412 t=04:59:18] init_worker: starting init_storage
+[pid=22412 t=04:59:18] init_worker: done
+[pid=22936 t=04:59:18] init_worker: starting init_storage
+[pid=22936 t=04:59:18] init_worker: done
+[pid=10872 t=04:59:18] init_worker: starting init_storage
+[pid=23272 t=04:59:18] init_worker: starting init_storage
+[pid=10872 t=04:59:18] init_worker: done
+[pid=23272 t=04:59:18] init_worker: done
+[pid=12196 t=04:59:18] run_backtest_task START ctx=256
+[pid=12196 t=04:59:18] run_backtest_task ensuring runner ctx=256
+[pid=12196 t=04:59:18] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=12196 t=04:59:18] _ensure_runner: acquired lock, loading model
+[pid=12196 t=04:59:18] _load_runner: importing factories
+[pid=12196 t=04:59:18] _load_runner: create_model(patchtst)
+[pid=12196 t=04:59:18] _load_runner: BacktestRunner init
+[pid=12196 t=04:59:18] _load_runner: done
+[pid=12196 t=04:59:18] _ensure_runner: model loaded, releasing lock
+[pid=12196 t=04:59:18] run_backtest_task calling runner.run ctx=256
+[pid=22412 t=04:59:18] run_backtest_task START ctx=512
+[pid=22412 t=04:59:18] run_backtest_task ensuring runner ctx=512
+[pid=22412 t=04:59:18] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=22412 t=04:59:18] _ensure_runner: acquired lock, loading model
+[pid=22412 t=04:59:18] _load_runner: importing factories
+[pid=22412 t=04:59:18] _load_runner: create_model(patchtst)
+[pid=22412 t=04:59:18] _load_runner: BacktestRunner init
+[pid=22412 t=04:59:18] _load_runner: done
+[pid=22412 t=04:59:18] _ensure_runner: model loaded, releasing lock
+[pid=22412 t=04:59:18] run_backtest_task calling runner.run ctx=512
+[pid=22936 t=04:59:18] run_backtest_task START ctx=1024
+[pid=22936 t=04:59:18] run_backtest_task ensuring runner ctx=1024
+[pid=22936 t=04:59:18] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=22936 t=04:59:18] _ensure_runner: acquired lock, loading model
+[pid=22936 t=04:59:18] _load_runner: importing factories
+[pid=22936 t=04:59:18] _load_runner: create_model(patchtst)
+[pid=22936 t=04:59:18] _load_runner: BacktestRunner init
+[pid=22936 t=04:59:18] _load_runner: done
+[pid=22936 t=04:59:18] _ensure_runner: model loaded, releasing lock
+[pid=22936 t=04:59:18] run_backtest_task calling runner.run ctx=1024
+[pid=10872 t=04:59:18] run_backtest_task START ctx=2048
+[pid=10872 t=04:59:18] run_backtest_task ensuring runner ctx=2048
+[pid=10872 t=04:59:18] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=10872 t=04:59:18] _ensure_runner: acquired lock, loading model
+[pid=10872 t=04:59:18] _load_runner: importing factories
+[pid=10872 t=04:59:18] _load_runner: create_model(patchtst)
+[pid=10872 t=04:59:18] _load_runner: BacktestRunner init
+[pid=10872 t=04:59:18] _load_runner: done
+[pid=10872 t=04:59:18] _ensure_runner: model loaded, releasing lock
+[pid=10872 t=04:59:18] run_backtest_task calling runner.run ctx=2048
+[pid=23272 t=04:59:18] run_backtest_task START ctx=4096
+[pid=23272 t=04:59:18] run_backtest_task ensuring runner ctx=4096
+[pid=23272 t=04:59:18] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=23272 t=04:59:18] _ensure_runner: acquired lock, loading model
+[pid=23272 t=04:59:18] _load_runner: importing factories
+[pid=23272 t=04:59:18] _load_runner: create_model(patchtst)
+[pid=23272 t=04:59:18] _load_runner: BacktestRunner init
+[pid=23272 t=04:59:18] _load_runner: done
+[pid=23272 t=04:59:18] _ensure_runner: model loaded, releasing lock
+[pid=23272 t=04:59:18] run_backtest_task calling runner.run ctx=4096
+[pid=23272 t=04:59:37] run_backtest_task runner.run done ctx=4096
+[pid=23272 t=04:59:37] run_backtest_task saving run ctx=4096
+[pid=23272 t=04:59:37] run_backtest_task saved run_id=128 ctx=4096
+[pid=23272 t=04:59:37] run_backtest_task DONE ctx=4096
+[pid=23272 t=04:59:37] run_backtest_task START ctx=8192
+[pid=23272 t=04:59:37] run_backtest_task ensuring runner ctx=8192
+[pid=23272 t=04:59:37] run_backtest_task calling runner.run ctx=8192
+[pid=22936 t=04:59:47] run_backtest_task runner.run done ctx=1024
+[pid=22936 t=04:59:47] run_backtest_task saving run ctx=1024
+[pid=22936 t=04:59:47] run_backtest_task saved run_id=129 ctx=1024
+[pid=22936 t=04:59:47] run_backtest_task DONE ctx=1024
+[pid=12196 t=04:59:48] run_backtest_task runner.run done ctx=256
+[pid=12196 t=04:59:48] run_backtest_task saving run ctx=256
+[pid=12196 t=04:59:48] run_backtest_task saved run_id=130 ctx=256
+[pid=12196 t=04:59:48] run_backtest_task DONE ctx=256
+[pid=22412 t=04:59:48] run_backtest_task runner.run done ctx=512
+[pid=22412 t=04:59:48] run_backtest_task saving run ctx=512
+[pid=22412 t=04:59:48] run_backtest_task saved run_id=131 ctx=512
+[pid=22412 t=04:59:48] run_backtest_task DONE ctx=512
+[pid=25116 t=04:59:48] run_backtest_task runner.run done ctx=128
+[pid=25116 t=04:59:48] run_backtest_task saving run ctx=128
+[pid=25116 t=04:59:48] run_backtest_task saved run_id=132 ctx=128
+[pid=25116 t=04:59:48] run_backtest_task DONE ctx=128
+[pid=23272 t=05:00:00] run_backtest_task runner.run done ctx=8192
+[pid=23272 t=05:00:00] run_backtest_task saving run ctx=8192
+[pid=23272 t=05:00:00] run_backtest_task saved run_id=133 ctx=8192
+[pid=23272 t=05:00:00] run_backtest_task DONE ctx=8192
+[pid=10872 t=05:00:04] run_backtest_task runner.run done ctx=2048
+[pid=10872 t=05:00:04] run_backtest_task saving run ctx=2048
+[pid=10872 t=05:00:04] run_backtest_task saved run_id=134 ctx=2048
+[pid=10872 t=05:00:04] run_backtest_task DONE ctx=2048
+[pid=22936 t=05:00:04] run_backtest_task START ctx=1296
+[pid=22936 t=05:00:04] run_backtest_task ensuring runner ctx=1296
+[pid=22936 t=05:00:04] run_backtest_task calling runner.run ctx=1296
+[pid=12196 t=05:00:04] run_backtest_task START ctx=1632
+[pid=12196 t=05:00:04] run_backtest_task ensuring runner ctx=1632
+[pid=12196 t=05:00:04] run_backtest_task calling runner.run ctx=1632
+[pid=22412 t=05:00:04] run_backtest_task START ctx=2560
+[pid=22412 t=05:00:04] run_backtest_task ensuring runner ctx=2560
+[pid=22412 t=05:00:04] run_backtest_task calling runner.run ctx=2560
+[pid=25116 t=05:00:04] run_backtest_task START ctx=3200
+[pid=25116 t=05:00:04] run_backtest_task ensuring runner ctx=3200
+[pid=25116 t=05:00:04] run_backtest_task calling runner.run ctx=3200
+[pid=12196 t=05:00:57] run_backtest_task runner.run done ctx=1632
+[pid=12196 t=05:00:57] run_backtest_task saving run ctx=1632
+[pid=12196 t=05:00:57] run_backtest_task saved run_id=135 ctx=1632
+[pid=12196 t=05:00:57] run_backtest_task DONE ctx=1632
+[pid=22936 t=05:02:06] run_backtest_task runner.run done ctx=1296
+[pid=22936 t=05:02:06] run_backtest_task saving run ctx=1296
+[pid=22936 t=05:02:06] run_backtest_task saved run_id=136 ctx=1296
+[pid=22936 t=05:02:06] run_backtest_task DONE ctx=1296
+[pid=22412 t=05:03:21] run_backtest_task runner.run done ctx=2560
+[pid=22412 t=05:03:21] run_backtest_task saving run ctx=2560
+[pid=22412 t=05:03:21] run_backtest_task saved run_id=137 ctx=2560
+[pid=22412 t=05:03:21] run_backtest_task DONE ctx=2560
+[pid=25116 t=05:03:23] run_backtest_task runner.run done ctx=3200
+[pid=25116 t=05:03:23] run_backtest_task saving run ctx=3200
+[pid=25116 t=05:03:23] run_backtest_task saved run_id=138 ctx=3200
+[pid=25116 t=05:03:23] run_backtest_task DONE ctx=3200
+[pid=22164 t=05:13:15] init_worker: starting init_storage
+[pid=25576 t=05:13:15] init_worker: starting init_storage
+[pid=25576 t=05:13:15] init_worker: done
+[pid=6988 t=05:13:15] init_worker: starting init_storage
+[pid=22164 t=05:13:15] init_worker: done
+[pid=8816 t=05:13:15] init_worker: starting init_storage
+[pid=20980 t=05:13:15] init_worker: starting init_storage
+[pid=6988 t=05:13:15] init_worker: done
+[pid=8816 t=05:13:15] init_worker: done
+[pid=20980 t=05:13:15] init_worker: done
+[pid=25576 t=05:13:15] run_backtest_task START ctx=128
+[pid=25576 t=05:13:15] run_backtest_task ensuring runner ctx=128
+[pid=25576 t=05:13:15] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=25576 t=05:13:15] _ensure_runner: acquired lock, loading model
+[pid=25576 t=05:13:15] _load_runner: importing factories
+[pid=25576 t=05:13:15] _load_runner: create_model(patchtst)
+[pid=25576 t=05:13:15] _load_runner: BacktestRunner init
+[pid=25576 t=05:13:15] _load_runner: done
+[pid=25576 t=05:13:15] _ensure_runner: model loaded, releasing lock
+[pid=25576 t=05:13:15] run_backtest_task calling runner.run ctx=128
+[pid=22164 t=05:13:15] run_backtest_task START ctx=256
+[pid=22164 t=05:13:15] run_backtest_task ensuring runner ctx=256
+[pid=22164 t=05:13:15] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=22164 t=05:13:15] _ensure_runner: acquired lock, loading model
+[pid=22164 t=05:13:15] _load_runner: importing factories
+[pid=22164 t=05:13:15] _load_runner: create_model(patchtst)
+[pid=22164 t=05:13:15] _load_runner: BacktestRunner init
+[pid=22164 t=05:13:15] _load_runner: done
+[pid=22164 t=05:13:15] _ensure_runner: model loaded, releasing lock
+[pid=22164 t=05:13:15] run_backtest_task calling runner.run ctx=256
+[pid=6988 t=05:13:15] run_backtest_task START ctx=512
+[pid=6988 t=05:13:15] run_backtest_task ensuring runner ctx=512
+[pid=6988 t=05:13:15] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=6988 t=05:13:15] _ensure_runner: acquired lock, loading model
+[pid=6988 t=05:13:15] _load_runner: importing factories
+[pid=6988 t=05:13:15] _load_runner: create_model(patchtst)
+[pid=6988 t=05:13:15] _load_runner: BacktestRunner init
+[pid=6988 t=05:13:15] _load_runner: done
+[pid=6988 t=05:13:15] _ensure_runner: model loaded, releasing lock
+[pid=6988 t=05:13:15] run_backtest_task calling runner.run ctx=512
+[pid=8816 t=05:13:15] run_backtest_task START ctx=1024
+[pid=8816 t=05:13:15] run_backtest_task ensuring runner ctx=1024
+[pid=8816 t=05:13:15] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=8816 t=05:13:15] _ensure_runner: acquired lock, loading model
+[pid=8816 t=05:13:15] _load_runner: importing factories
+[pid=8816 t=05:13:15] _load_runner: create_model(patchtst)
+[pid=8816 t=05:13:15] _load_runner: BacktestRunner init
+[pid=8816 t=05:13:15] _load_runner: done
+[pid=8816 t=05:13:15] _ensure_runner: model loaded, releasing lock
+[pid=8816 t=05:13:15] run_backtest_task calling runner.run ctx=1024
+[pid=20980 t=05:13:15] run_backtest_task START ctx=2048
+[pid=20980 t=05:13:15] run_backtest_task ensuring runner ctx=2048
+[pid=20980 t=05:13:15] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=20980 t=05:13:15] _ensure_runner: acquired lock, loading model
+[pid=20980 t=05:13:15] _load_runner: importing factories
+[pid=20980 t=05:13:15] _load_runner: create_model(patchtst)
+[pid=20980 t=05:13:15] _load_runner: BacktestRunner init
+[pid=20980 t=05:13:15] _load_runner: done
+[pid=20980 t=05:13:15] _ensure_runner: model loaded, releasing lock
+[pid=20980 t=05:13:15] run_backtest_task calling runner.run ctx=2048
+[pid=20980 t=05:13:32] run_backtest_task runner.run done ctx=2048
+[pid=20980 t=05:13:32] run_backtest_task saving run ctx=2048
+[pid=20980 t=05:13:32] run_backtest_task saved run_id=154 ctx=2048
+[pid=20980 t=05:13:32] run_backtest_task DONE ctx=2048
+[pid=20980 t=05:13:32] run_backtest_task START ctx=4096
+[pid=20980 t=05:13:32] run_backtest_task ensuring runner ctx=4096
+[pid=20980 t=05:13:32] run_backtest_task calling runner.run ctx=4096
+[pid=8816 t=05:13:33] run_backtest_task runner.run done ctx=1024
+[pid=8816 t=05:13:33] run_backtest_task saving run ctx=1024
+[pid=8816 t=05:13:33] run_backtest_task saved run_id=155 ctx=1024
+[pid=8816 t=05:13:33] run_backtest_task DONE ctx=1024
+[pid=8816 t=05:13:33] run_backtest_task START ctx=8192
+[pid=8816 t=05:13:33] run_backtest_task ensuring runner ctx=8192
+[pid=8816 t=05:13:33] run_backtest_task calling runner.run ctx=8192
+[pid=25576 t=05:13:33] run_backtest_task runner.run done ctx=128
+[pid=25576 t=05:13:33] run_backtest_task saving run ctx=128
+[pid=25576 t=05:13:33] run_backtest_task saved run_id=156 ctx=128
+[pid=25576 t=05:13:33] run_backtest_task DONE ctx=128
+[pid=20980 t=05:13:45] run_backtest_task runner.run done ctx=4096
+[pid=20980 t=05:13:45] run_backtest_task saving run ctx=4096
+[pid=20980 t=05:13:45] run_backtest_task saved run_id=157 ctx=4096
+[pid=20980 t=05:13:45] run_backtest_task DONE ctx=4096
+[pid=8816 t=05:13:45] run_backtest_task runner.run done ctx=8192
+[pid=8816 t=05:13:45] run_backtest_task saving run ctx=8192
+[pid=8816 t=05:13:45] run_backtest_task saved run_id=158 ctx=8192
+[pid=8816 t=05:13:45] run_backtest_task DONE ctx=8192
+[pid=6988 t=05:13:46] run_backtest_task runner.run done ctx=512
+[pid=6988 t=05:13:46] run_backtest_task saving run ctx=512
+[pid=6988 t=05:13:46] run_backtest_task saved run_id=159 ctx=512
+[pid=6988 t=05:13:46] run_backtest_task DONE ctx=512
+[pid=22164 t=05:13:47] run_backtest_task runner.run done ctx=256
+[pid=22164 t=05:13:47] run_backtest_task saving run ctx=256
+[pid=22164 t=05:13:47] run_backtest_task saved run_id=160 ctx=256
+[pid=22164 t=05:13:47] run_backtest_task DONE ctx=256
+[pid=25576 t=05:13:47] run_backtest_task START ctx=1296
+[pid=25576 t=05:13:47] run_backtest_task ensuring runner ctx=1296
+[pid=25576 t=05:13:47] run_backtest_task calling runner.run ctx=1296
+[pid=20980 t=05:13:47] run_backtest_task START ctx=1632
+[pid=20980 t=05:13:47] run_backtest_task ensuring runner ctx=1632
+[pid=20980 t=05:13:47] run_backtest_task calling runner.run ctx=1632
+[pid=8816 t=05:13:47] run_backtest_task START ctx=2560
+[pid=8816 t=05:13:47] run_backtest_task ensuring runner ctx=2560
+[pid=8816 t=05:13:47] run_backtest_task calling runner.run ctx=2560
+[pid=6988 t=05:13:47] run_backtest_task START ctx=3200
+[pid=6988 t=05:13:47] run_backtest_task ensuring runner ctx=3200
+[pid=6988 t=05:13:47] run_backtest_task calling runner.run ctx=3200
+[pid=6988 t=05:13:57] run_backtest_task runner.run done ctx=3200
+[pid=6988 t=05:13:57] run_backtest_task saving run ctx=3200
+[pid=6988 t=05:13:57] run_backtest_task saved run_id=161 ctx=3200
+[pid=6988 t=05:13:57] run_backtest_task DONE ctx=3200
+[pid=8816 t=05:14:00] run_backtest_task runner.run done ctx=2560
+[pid=8816 t=05:14:00] run_backtest_task saving run ctx=2560
+[pid=8816 t=05:14:00] run_backtest_task saved run_id=162 ctx=2560
+[pid=8816 t=05:14:00] run_backtest_task DONE ctx=2560
+[pid=25576 t=05:14:00] run_backtest_task runner.run done ctx=1296
+[pid=25576 t=05:14:00] run_backtest_task saving run ctx=1296
+[pid=25576 t=05:14:00] run_backtest_task saved run_id=163 ctx=1296
+[pid=25576 t=05:14:00] run_backtest_task DONE ctx=1296
+[pid=20980 t=05:14:00] run_backtest_task runner.run done ctx=1632
+[pid=20980 t=05:14:00] run_backtest_task saving run ctx=1632
+[pid=20980 t=05:14:00] run_backtest_task saved run_id=164 ctx=1632
+[pid=20980 t=05:14:00] run_backtest_task DONE ctx=1632
+[pid=1900 t=20:43:28] init_worker: starting init_storage
+
+[pid=26276 t=20:43:28] init_worker: starting init_storage
+[pid=26276 t=20:43:28] init_worker: done
+[pid=25828 t=20:43:28] init_worker: done
+[pid=25860 t=20:43:28] init_worker: done
+[pid=26276 t=20:43:28] run_backtest_task START ctx=128
+[pid=26276 t=20:43:28] run_backtest_task ensuring runner ctx=128 artifact_id=None
+[pid=26276 t=20:43:28] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=26276 t=20:43:28] _ensure_runner: acquired lock, loading model
+[pid=26276 t=20:43:28] _load_runner: importing factories
+[pid=26276 t=20:43:28] _load_runner: create_model(patchtst)
+[pid=26276 t=20:43:28] _load_runner: BacktestRunner init
+[pid=26276 t=20:43:28] _load_runner: done
+[pid=26276 t=20:43:28] _ensure_runner: model loaded, releasing lock
+[pid=26276 t=20:43:28] run_backtest_task calling runner.run ctx=128
+[pid=11028 t=20:43:28] init_worker: done
+[pid=1900 t=20:43:28] init_worker: done
+[pid=25828 t=20:43:28] run_backtest_task START ctx=256
+[pid=25828 t=20:43:28] run_backtest_task ensuring runner ctx=256 artifact_id=None
+[pid=25828 t=20:43:28] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=25828 t=20:43:28] _ensure_runner: acquired lock, loading model
+[pid=25828 t=20:43:28] _load_runner: importing factories
+[pid=25828 t=20:43:28] _load_runner: create_model(patchtst)
+[pid=25828 t=20:43:28] _load_runner: BacktestRunner init
+[pid=25828 t=20:43:28] _load_runner: done
+[pid=25828 t=20:43:28] _ensure_runner: model loaded, releasing lock
+[pid=25828 t=20:43:28] run_backtest_task calling runner.run ctx=256
+[pid=25860 t=20:43:28] run_backtest_task START ctx=512
+[pid=25860 t=20:43:28] run_backtest_task ensuring runner ctx=512 artifact_id=None
+[pid=25860 t=20:43:28] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=25860 t=20:43:28] _ensure_runner: acquired lock, loading model
+[pid=25860 t=20:43:28] _load_runner: importing factories
+[pid=25860 t=20:43:28] _load_runner: create_model(patchtst)
+[pid=25860 t=20:43:28] _load_runner: BacktestRunner init
+[pid=25860 t=20:43:28] _load_runner: done
+[pid=25860 t=20:43:28] _ensure_runner: model loaded, releasing lock
+[pid=25860 t=20:43:28] run_backtest_task calling runner.run ctx=512
+[pid=11028 t=20:43:28] run_backtest_task START ctx=1024
+[pid=11028 t=20:43:28] run_backtest_task ensuring runner ctx=1024 artifact_id=None
+[pid=11028 t=20:43:28] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=11028 t=20:43:28] _ensure_runner: acquired lock, loading model
+[pid=11028 t=20:43:28] _load_runner: importing factories
+[pid=11028 t=20:43:28] _load_runner: create_model(patchtst)
+[pid=11028 t=20:43:28] _load_runner: BacktestRunner init
+[pid=11028 t=20:43:28] _load_runner: done
+[pid=11028 t=20:43:28] _ensure_runner: model loaded, releasing lock
+[pid=11028 t=20:43:28] run_backtest_task calling runner.run ctx=1024
+[pid=1900 t=20:43:28] run_backtest_task START ctx=2048
+[pid=1900 t=20:43:28] run_backtest_task ensuring runner ctx=2048 artifact_id=None
+[pid=1900 t=20:43:28] _ensure_runner: waiting for model_load_lock (model=patchtst)
+[pid=1900 t=20:43:28] _ensure_runner: acquired lock, loading model
+[pid=1900 t=20:43:28] _load_runner: importing factories
+[pid=1900 t=20:43:28] _load_runner: create_model(patchtst)
+[pid=1900 t=20:43:28] _load_runner: BacktestRunner init
+[pid=1900 t=20:43:28] _load_runner: done
+[pid=1900 t=20:43:28] _ensure_runner: model loaded, releasing lock
+[pid=1900 t=20:43:28] run_backtest_task calling runner.run ctx=2048
+[pid=26276 t=20:44:41] run_backtest_task runner.run done ctx=128
+[pid=26276 t=20:44:41] run_backtest_task saving run ctx=128
+[pid=26276 t=20:44:41] run_backtest_task saved run_id=6 ctx=128
+[pid=26276 t=20:44:41] run_backtest_task DONE ctx=128
+[pid=26276 t=20:44:41] run_backtest_task START ctx=4096
+[pid=26276 t=20:44:41] run_backtest_task ensuring runner ctx=4096 artifact_id=None
+[pid=26276 t=20:44:41] run_backtest_task calling runner.run ctx=4096
+[pid=1900 t=20:44:49] run_backtest_task runner.run done ctx=2048
+[pid=1900 t=20:44:49] run_backtest_task saving run ctx=2048
+[pid=1900 t=20:44:49] run_backtest_task saved run_id=7 ctx=2048
+[pid=1900 t=20:44:49] run_backtest_task DONE ctx=2048
+[pid=1900 t=20:44:49] run_backtest_task START ctx=8192
+[pid=1900 t=20:44:49] run_backtest_task ensuring runner ctx=8192 artifact_id=None
+[pid=1900 t=20:44:49] run_backtest_task calling runner.run ctx=8192
+[pid=11028 t=20:44:49] run_backtest_task runner.run done ctx=1024
+[pid=11028 t=20:44:49] run_backtest_task saving run ctx=1024
+[pid=11028 t=20:44:49] run_backtest_task saved run_id=8 ctx=1024
+[pid=11028 t=20:44:49] run_backtest_task DONE ctx=1024
+[pid=26276 t=20:45:00] run_backtest_task runner.run done ctx=4096
+[pid=26276 t=20:45:00] run_backtest_task saving run ctx=4096
+[pid=26276 t=20:45:00] run_backtest_task saved run_id=9 ctx=4096
+[pid=26276 t=20:45:00] run_backtest_task DONE ctx=4096
+[pid=25860 t=20:45:00] run_backtest_task runner.run done ctx=512
+[pid=25860 t=20:45:00] run_backtest_task saving run ctx=512
+[pid=25860 t=20:45:00] run_backtest_task saved run_id=10 ctx=512
+[pid=25860 t=20:45:00] run_backtest_task DONE ctx=512
+[pid=25828 t=20:45:00] run_backtest_task runner.run done ctx=256
+[pid=25828 t=20:45:00] run_backtest_task saving run ctx=256
+[pid=25828 t=20:45:00] run_backtest_task saved run_id=11 ctx=256
+[pid=25828 t=20:45:00] run_backtest_task DONE ctx=256
+[pid=1900 t=20:45:00] run_backtest_task runner.run done ctx=8192
+[pid=1900 t=20:45:00] run_backtest_task saving run ctx=8192
+[pid=1900 t=20:45:00] run_backtest_task saved run_id=12 ctx=8192
+[pid=1900 t=20:45:00] run_backtest_task DONE ctx=8192
+[pid=11028 t=20:45:00] run_backtest_task START ctx=640
+[pid=11028 t=20:45:00] run_backtest_task ensuring runner ctx=640 artifact_id=None
+[pid=11028 t=20:45:00] run_backtest_task calling runner.run ctx=640
+[pid=26276 t=20:45:00] run_backtest_task START ctx=816
+[pid=26276 t=20:45:00] run_backtest_task ensuring runner ctx=816 artifact_id=None
+[pid=26276 t=20:45:00] run_backtest_task calling runner.run ctx=816
+[pid=25860 t=20:45:00] run_backtest_task START ctx=1280
+[pid=25860 t=20:45:00] run_backtest_task ensuring runner ctx=1280 artifact_id=None
+[pid=25860 t=20:45:00] run_backtest_task calling runner.run ctx=1280
+[pid=25828 t=20:45:00] run_backtest_task START ctx=1600
+[pid=25828 t=20:45:00] run_backtest_task ensuring runner ctx=1600 artifact_id=None
+[pid=25828 t=20:45:00] run_backtest_task calling runner.run ctx=1600
+[pid=25828 t=20:45:16] run_backtest_task runner.run done ctx=1600
+[pid=25828 t=20:45:16] run_backtest_task saving run ctx=1600
+[pid=25828 t=20:45:16] run_backtest_task saved run_id=13 ctx=1600
+[pid=25828 t=20:45:16] run_backtest_task DONE ctx=1600
+[pid=25860 t=20:45:16] run_backtest_task runner.run done ctx=1280
+[pid=25860 t=20:45:16] run_backtest_task saving run ctx=1280
+[pid=25860 t=20:45:16] run_backtest_task saved run_id=14 ctx=1280
+[pid=25860 t=20:45:16] run_backtest_task DONE ctx=1280
+[pid=26276 t=20:45:16] run_backtest_task runner.run done ctx=816
+[pid=26276 t=20:45:16] run_backtest_task saving run ctx=816
+[pid=26276 t=20:45:16] run_backtest_task saved run_id=15 ctx=816
+[pid=26276 t=20:45:16] run_backtest_task DONE ctx=816
+[pid=11028 t=20:45:17] run_backtest_task runner.run done ctx=640
+[pid=11028 t=20:45:17] run_backtest_task saving run ctx=640
+[pid=11028 t=20:45:17] run_backtest_task saved run_id=16 ctx=640
+[pid=11028 t=20:45:17] run_backtest_task DONE ctx=640

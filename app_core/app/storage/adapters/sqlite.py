@@ -36,7 +36,8 @@ def init_sqlite_schema(db_path: str) -> None:
                                                                           market TEXT,
                                                                           interval TEXT NOT NULL,
                                                                           model_name TEXT NOT NULL,
-                                                                          training_type TEXT NOT NULL,
+                                                                          training_components_json TEXT NOT NULL,
+                                                                          train_window_size INTEGER NOT NULL,
                                                                           version TEXT NOT NULL,
                                                                           status TEXT NOT NULL DEFAULT 'ready',
                                                                           metrics_json TEXT,
@@ -44,7 +45,7 @@ def init_sqlite_schema(db_path: str) -> None:
                                                                           artifact_path TEXT NOT NULL,
                                                                           created_at TEXT NOT NULL DEFAULT (datetime('now')),
                                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                               UNIQUE(symbol, market, interval, model_name, training_type, version)
+                               UNIQUE(symbol, market, interval, model_name, training_components_json, train_window_size, version)
                                );
 
                            CREATE TABLE IF NOT EXISTS provider_state (
@@ -94,8 +95,8 @@ def init_sqlite_schema(db_path: str) -> None:
                                                                           ticker TEXT NOT NULL,
                                                                           source TEXT NOT NULL,
                                                                           interval TEXT NOT NULL,
-                                                                          has_lora INTEGER NOT NULL DEFAULT 0,
-                                                                          lora_artifact_id INTEGER,
+                                                                          artifact_id INTEGER,
+                                                                          applied_components_json TEXT NOT NULL DEFAULT '[]',
                                                                           train_window_mode TEXT NOT NULL,
                                                                           train_window_size INTEGER NOT NULL,
                                                                           horizon INTEGER NOT NULL,
@@ -121,7 +122,7 @@ def init_sqlite_schema(db_path: str) -> None:
                                );
 
                            CREATE INDEX IF NOT EXISTS idx_model_artifacts_lookup
-                               ON model_artifacts(symbol, interval, model_name, training_type, status);
+                               ON model_artifacts(symbol, interval, model_name, status);
 
                            CREATE INDEX IF NOT EXISTS idx_market_candles_lookup
                                ON market_candles(ticker, source, interval, timestamp);
@@ -130,10 +131,13 @@ def init_sqlite_schema(db_path: str) -> None:
                                ON candle_unavailable_ranges(ticker, source, interval);
 
                            CREATE INDEX IF NOT EXISTS idx_backtest_runs_lookup
-                               ON backtest_runs(model_name, ticker, source, interval, has_lora);
+                               ON backtest_runs(model_name, ticker, source, interval);
 
                            CREATE INDEX IF NOT EXISTS idx_backtest_runs_sweep
                                ON backtest_runs(sweep_id);
+
+                           CREATE INDEX IF NOT EXISTS idx_backtest_runs_artifact
+                               ON backtest_runs(artifact_id);
                            """)
         conn.commit()
     finally:
@@ -156,59 +160,88 @@ class SQLiteModelRegistryRepo:
     def _from_json(v: str | None) -> dict[str, Any] | None:
         return None if not v else json.loads(v)
 
-    def upsert(self, item: ModelArtifact) -> None:
-        self.conn.execute(
+    @staticmethod
+    def _row_to_artifact(r: sqlite3.Row) -> ModelArtifact:
+        return ModelArtifact(
+            id=r["id"],
+            symbol=r["symbol"],
+            market=r["market"],
+            interval=r["interval"],
+            model_name=r["model_name"],
+            training_components=json.loads(r["training_components_json"] or "[]"),
+            train_window_size=r["train_window_size"],
+            version=r["version"],
+            status=r["status"],
+            artifact_path=r["artifact_path"],
+            metrics=SQLiteModelRegistryRepo._from_json(r["metrics_json"]),
+            params=SQLiteModelRegistryRepo._from_json(r["params_json"]),
+            created_at=r["created_at"],
+        )
+
+    def upsert(self, item: ModelArtifact) -> int:
+        components_json = json.dumps(item.training_components, ensure_ascii=False)
+        cursor = self.conn.execute(
             """
             INSERT INTO model_artifacts (
-                symbol, market, interval, model_name, training_type, version,
+                symbol, market, interval, model_name,
+                training_components_json, train_window_size, version,
                 status, metrics_json, params_json, artifact_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, market, interval, model_name, training_type, version)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, market, interval, model_name,
+                            training_components_json, train_window_size, version)
             DO UPDATE SET
                 status=excluded.status,
-                                   metrics_json=excluded.metrics_json,
-                                   params_json=excluded.params_json,
-                                   artifact_path=excluded.artifact_path,
-                                   updated_at=datetime('now')
+                metrics_json=excluded.metrics_json,
+                params_json=excluded.params_json,
+                artifact_path=excluded.artifact_path,
+                updated_at=datetime('now')
+            RETURNING id
             """,
             (
                 item.symbol, item.market, item.interval, item.model_name,
-                item.training_type, item.version, item.status,
+                components_json, item.train_window_size, item.version,
+                item.status,
                 self._to_json(item.metrics), self._to_json(item.params),
                 item.artifact_path,
             ),
         )
+        row = cursor.fetchone()
+        artifact_id = row[0] if row else None
+        if artifact_id is not None:
+            item.id = artifact_id
+        return artifact_id
+
+    def get_by_id(self, artifact_id: int) -> ModelArtifact | None:
+        row = self.conn.execute(
+            "SELECT * FROM model_artifacts WHERE id=?",
+            (artifact_id,),
+        ).fetchone()
+        return self._row_to_artifact(row) if row else None
 
     def find_ready(
             self,
             symbol: str,
             interval: str,
             model_name: str,
-            training_type: str,
             market: str | None = None,
     ) -> list[ModelArtifact]:
         rows = self.conn.execute(
             """
             SELECT * FROM model_artifacts
-            WHERE symbol=? AND interval=? AND model_name=? AND training_type=?
+            WHERE symbol=? AND interval=? AND model_name=?
               AND status='ready'
-              AND (market=? OR (?  IS NULL AND market IS NULL))
+              AND (market=? OR (? IS NULL AND market IS NULL))
             ORDER BY updated_at DESC
             """,
-            (symbol, interval, model_name, training_type, market, market),
+            (symbol, interval, model_name, market, market),
         ).fetchall()
+        return [self._row_to_artifact(r) for r in rows]
 
-        return [
-            ModelArtifact(
-                symbol=r["symbol"], market=r["market"], interval=r["interval"],
-                model_name=r["model_name"], training_type=r["training_type"],
-                version=r["version"], status=r["status"],
-                artifact_path=r["artifact_path"],
-                metrics=self._from_json(r["metrics_json"]),
-                params=self._from_json(r["params_json"]),
-            )
-            for r in rows
-        ]
+    def list_all(self) -> list[ModelArtifact]:
+        rows = self.conn.execute(
+            "SELECT * FROM model_artifacts ORDER BY updated_at DESC"
+        ).fetchall()
+        return [self._row_to_artifact(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -542,8 +575,8 @@ class SQLiteBacktestRepository:
             ticker=r["ticker"],
             source=r["source"],
             interval=r["interval"],
-            has_lora=bool(r["has_lora"]),
-            lora_artifact_id=r["lora_artifact_id"],
+            artifact_id=r["artifact_id"],
+            applied_components=json.loads(r["applied_components_json"] or "[]"),
             train_window_mode=r["train_window_mode"],
             train_window_size=r["train_window_size"],
             horizon=r["horizon"],
@@ -572,7 +605,8 @@ class SQLiteBacktestRepository:
         cursor = self.conn.execute(
             """
             INSERT INTO backtest_runs (
-                model_name, ticker, source, interval, has_lora, lora_artifact_id,
+                model_name, ticker, source, interval,
+                artifact_id, applied_components_json,
                 train_window_mode, train_window_size, horizon, step,
                 backtest_target, evaluation_weights, weight_first_to_last_ratio,
                 bootstrap_iterations, ci_z_score,
@@ -583,7 +617,8 @@ class SQLiteBacktestRepository:
             """,
             (
                 record.model_name, record.ticker, record.source, record.interval,
-                1 if record.has_lora else 0, record.lora_artifact_id,
+                record.artifact_id,
+                json.dumps(record.applied_components, ensure_ascii=False),
                 record.train_window_mode, record.train_window_size, record.horizon, record.step,
                 record.backtest_target, record.evaluation_weights, record.weight_first_to_last_ratio,
                 record.bootstrap_iterations, record.ci_z_score,
@@ -613,7 +648,7 @@ class SQLiteBacktestRepository:
             ticker: str | None = None,
             source: str | None = None,
             interval: str | None = None,
-            has_lora: bool | None = None,
+            artifact_id: int | None = None,
             sweep_id: int | None = None,
             limit: int = 100,
             offset: int = 0,
@@ -632,9 +667,9 @@ class SQLiteBacktestRepository:
         if interval is not None:
             clauses.append("interval=?")
             params.append(interval)
-        if has_lora is not None:
-            clauses.append("has_lora=?")
-            params.append(1 if has_lora else 0)
+        if artifact_id is not None:
+            clauses.append("artifact_id=?")
+            params.append(artifact_id)
         if sweep_id is not None:
             clauses.append("sweep_id=?")
             params.append(sweep_id)

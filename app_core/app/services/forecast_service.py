@@ -77,17 +77,28 @@ class ForecastService:
         """
         Сохраняет результат бэктеста в БД. Возвращает присвоенный run_id.
 
-        source здесь это идентификатор инструмента (тикер или csv путь),
+        source — идентификатор инструмента (тикер или csv путь);
         request.data_source — тип источника ('t_invest', 'yfinance', 'csv').
+
+        artifact_id и applied_components наследуются из request и резолва артефакта
+        (resolved заранее в BacktestRunner.run; здесь читаем из request.artifact_id).
         """
         meta = response.metadata
+        artifact_id = request.artifact_id
+        applied_components: list[str] = []
+        if artifact_id is not None:
+            with get_uow_factory()() as uow:
+                artifact = uow.model_registry.get_by_id(artifact_id)
+            if artifact is not None:
+                applied_components = list(artifact.training_components or [])
+
         record = BacktestRunRecord(
             model_name=response.model.get("name", "unknown"),
             ticker=source,
             source=request.data_source,
             interval=request.interval,
-            has_lora=False,                   # пока без LoRA; добавится в Step 4
-            lora_artifact_id=None,
+            artifact_id=artifact_id,
+            applied_components=applied_components,
             train_window_mode=meta.get("train_window_mode", "sliding"),
             train_window_size=meta.get("train_window_size", request.train_window_size),
             horizon=request.horizon,

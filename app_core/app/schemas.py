@@ -171,6 +171,13 @@ class ForecastRequest(BaseModel):
         default_factory=list,
         description="Список feature-плагинов для multivariate моделей"
     )
+    artifact_id: int | None = Field(
+        default=None,
+        description=(
+            "ID дообученного артефакта (LoRA / head / комбо) из таблицы model_artifacts. "
+            "None — базовая модель. См. подробное описание в BacktestBaseRequest.artifact_id."
+        )
+    )
 
     @model_validator(mode="after")
     def validate_options(self):
@@ -401,6 +408,19 @@ class BacktestBaseRequest(BaseModel):
         )
     )
 
+    artifact_id: int | None = Field(
+        default=None,
+        description=(
+            "ID артефакта дообучения из таблицы model_artifacts. "
+            "None (по умолчанию) — используется базовая модель без адаптации. "
+            "Артефакт может содержать LoRA-адаптеры, новую output head, или их "
+            "комбинацию — применяется автоматически на основе training_components "
+            "в записи артефакта. "
+            "При использовании артефакта `train_window_size` НАСЛЕДУЕТСЯ из артефакта "
+            "(на каком контексте был обучен) — пользовательское значение игнорируется."
+        )
+    )
+
     detailed_logs: bool = Field(
         default=False,
         description=(
@@ -465,10 +485,9 @@ class BacktestRequest(BacktestBaseRequest):
 
 
 RankingMetric = Literal[
-    "skill_mae_close",     # backtest_target="ohlc": MAE_close vs naive (по умолчанию)
-    "skill_mae",            # backtest_target="close": MAE vs naive
-    "pinball_mean",         # общее качество квантильного прогноза (инвертируется: меньше=лучше)
-    "directional_acc",      # точность направления
+    "skill",            # 1 − model_MAE/naive_MAE. >0 лучше naive. ВЫШЕ=лучше.
+    "pinball_mean",     # квантильное качество прогноза. НИЖЕ=лучше (инвертируется).
+    "directional_acc",  # доля баров с правильным направлением (vs last_known). ВЫШЕ=лучше.
 ]
 
 
@@ -497,11 +516,13 @@ class BacktestSweepRequest(BacktestBaseRequest):
         )
     )
     ranking_metric: RankingMetric = Field(
-        default="skill_mae_close",
+        default="skill",
         description=(
-            "Метрика для ранжирования конфигов. Для target='close' лучше 'skill_mae'. "
-            "Для приоритизации направления — 'directional_acc'. "
-            "pinball_mean инвертируется (меньше = лучше) автоматически."
+            "Метрика для ранжирования конфигов sweep'а. "
+            "'skill' (по умолчанию) — 1 − model_MAE/naive_MAE. "
+            "Универсально: автоматически работает с backtest_target='close' и 'ohlc'. "
+            "'directional_acc' — приоритет на точность направления (для торговых сигналов). "
+            "'pinball_mean' — качество квантильного прогноза (инвертируется автоматически)."
         )
     )
     cv_folds: int = Field(
@@ -520,6 +541,19 @@ class BacktestSweepRequest(BacktestBaseRequest):
         description=(
             "Порог в единицах LCB, ниже которого считаем результаты статистически "
             "равными. При равенстве выбираем меньший train_window_size."
+        )
+    )
+    parallel_workers: int = Field(
+        default=1, ge=1, le=8,
+        description=(
+            "Число параллельных worker-процессов для прогона разных контекстов sweep. "
+            "1 (по умолчанию) — последовательно в главном процессе. "
+            "2 — параллельно через ProcessPoolExecutor (каждый воркер держит свою "
+            "копию модели в VRAM, ~3-4 GB на воркер). На Windows без NVIDIA MPS GPU "
+            "сериализуется между процессами — реальный выигрыш на CPU-фазе. "
+            "Ожидаемое ускорение sweep ~30-50%. "
+            "Максимум 2 для 12GB GPU. Для большего нужна карта 24GB+ И поднять cap "
+            "в коде (Field(le=...))."
         )
     )
 
@@ -629,3 +663,129 @@ class BacktestResponse(BaseModel):
         "weight_first_to_last_ratio, bootstrap_iterations, feature_plugins, backtest_target, "
         "trimmed_windows_count/share, metric_note."
     ))
+
+
+# ---------------------------------------------------------------------------
+# Training requests
+# ---------------------------------------------------------------------------
+
+class TrainingBaseRequest(BaseModel):
+    """
+    Общие параметры для всех training-эндпоинтов (head / lora / combo).
+    Часть полей похожа на BacktestBaseRequest (данные, источник), часть —
+    специфичная для обучения (LR, epochs, val_split).
+    """
+    model_name: Literal["chronos", "patchtst"] | None = Field(
+        default=None,
+        description="Базовая модель для дообучения. None — модель по умолчанию."
+    )
+    data_source: Literal["yfinance", "t_invest", "csv"] = Field(default="t_invest")
+    provider_options: ProviderOptions | None = Field(default=None)
+
+    history_period: str = Field(default="5y", description="Длина истории для обучения. Чем больше — тем стабильнее адаптер.")
+    history_up_to: str | None = Field(default=None)
+    interval: str = Field(default="1h")
+
+    train_window_size: int = Field(
+        default=8192, ge=16, le=8192,
+        description=(
+            "Контекст на котором обучаем. ВАЖНО: артефакт «помнит» этот размер "
+            "и при использовании в backtest/forecast train_window_size наследуется отсюда."
+        )
+    )
+    horizon: int = Field(
+        default=64, ge=1, le=64,
+        description="Горизонт прогноза. Обычно 64 — нативная длина выхода PatchTST FM."
+    )
+    step: int = Field(
+        default=64, ge=1, le=8192,
+        description=(
+            "Шаг walk-forward для генерации обучающих пар. step=horizon — окна не "
+            "перекрываются (независимые сэмплы, более чистое обучение). "
+            "Меньше шаг = больше обучающих пар, но коррелированы."
+        )
+    )
+
+    batch_size: int = Field(default=16, ge=1, le=128)
+    learning_rate: float = Field(default=5e-4, gt=0.0, le=1.0)
+    num_epochs: int = Field(default=5, ge=1, le=100)
+    val_split: float = Field(
+        default=0.15, ge=0.0, lt=0.9,
+        description="Доля свежих окон отводимых в валидацию. 0 — без val (вся история на train)."
+    )
+
+    evaluation_weights: Literal["uniform", "exponential", "linear"] = Field(default="exponential")
+    weight_first_to_last_ratio: float = Field(default=16.0, ge=1.0, le=1000.0)
+
+    version: str = Field(
+        default="v1",
+        description=(
+            "Версия артефакта внутри ключа (symbol, interval, components, ctx). "
+            "Меняй при переобучении с другими гиперпараметрами чтобы не конфликтовать."
+        )
+    )
+    num_workers: int = Field(
+        default=0, ge=0, le=8,
+        description=(
+            "Число воркеров для DataLoader. 0 — без подпроцессов (рекомендуется на Windows "
+            "если нет потребности в I/O-параллелизме)."
+        )
+    )
+
+    @model_validator(mode="after")
+    def validate_provider(self):
+        if self.data_source == "csv":
+            if self.provider_options is not None and not isinstance(self.provider_options, CsvProviderOptions):
+                raise ValueError("Для csv нужен CsvProviderOptions.")
+        elif self.data_source == "t_invest":
+            if self.provider_options is not None and not isinstance(self.provider_options, TInvestProviderOptions):
+                raise ValueError("Для t_invest нужен TInvestProviderOptions.")
+        elif self.data_source == "yfinance":
+            if self.provider_options is not None and not isinstance(self.provider_options, YahooProviderOptions):
+                raise ValueError("Для yfinance нужен YahooProviderOptions.")
+        return self
+
+
+class HeadTrainingRequest(TrainingBaseRequest):
+    """Обучение только output head (linear probing). Самый простой baseline."""
+    pass
+
+
+class LoraTrainingRequest(TrainingBaseRequest):
+    """
+    Обучение LoRA-адаптеров через PEFT.
+    Дополнительные параметры специфичны для LoRA.
+    """
+    lora_r: int = Field(
+        default=8, ge=1, le=256,
+        description="Ранг LoRA-матриц. 8-16 — типичный диапазон. Больше r = больше параметров."
+    )
+    lora_alpha: int = Field(
+        default=16, ge=1, le=512,
+        description="Alpha LoRA, scaling factor. Обычно ≈ 2r."
+    )
+    lora_dropout: float = Field(default=0.05, ge=0.0, le=0.5)
+    lora_target_modules: list[str] = Field(
+        default_factory=lambda: ["q_proj", "k_proj", "v_proj", "out_proj"],
+        description="Список имён модулей в base-модели куда инжектить LoRA-матрицы."
+    )
+    train_head_too: bool = Field(
+        default=False,
+        description=(
+            "Если True — дополнительно обучается новая output head поверх LoRA. "
+            "Артефакт получит training_components=['lora', 'head']."
+        )
+    )
+
+
+class TrainingResponse(BaseModel):
+    """Ответ training-эндпоинтов."""
+    artifact_id: int
+    status: Literal["ready", "training", "failed"]
+    training_components: list[str]
+    metrics: dict[str, Any] = Field(
+        description=(
+            "Метрики после обучения: final_train_loss, final_val_loss, "
+            "epochs_completed, train_history, val_history."
+        )
+    )

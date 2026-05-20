@@ -10,28 +10,65 @@ from typing import Any, Protocol
 
 @dataclass
 class ModelArtifact:
+    """
+    Дообученный артефакт поверх foundation-модели.
+
+    training_components — список компонентов которые применяются при загрузке:
+       ["lora"]         — только LoRA-адаптеры (низкоранговые матрицы)
+       ["head"]         — только новая output head (linear probing)
+       ["lora", "head"] — комбо: LoRA + новая head обучаются вместе
+       ["full_ft"]      — полное дообучение (не планируем, но архитектурно возможно)
+
+    train_window_size — контекст на котором обучен артефакт. Часть «идентичности»
+    артефакта: разные контексты дают разные внутренние представления, на (ticker,
+    interval) может быть несколько артефактов с разными train_window_size.
+
+    artifact_path — путь к директории с файлами:
+       data/artifacts/{id}/
+          adapter_model.safetensors    (если "lora" в components)
+          head.pt                       (если "head" в components)
+          metadata.json                 (всегда — снимок params + базовая инфа)
+
+    params — конфиг обучения (LR, epochs, lora_r/alpha, training_loss и т.д.).
+    metrics — val-метрики после обучения (val_pinball, val_skill, val_dir_acc).
+    """
     symbol: str
     market: str | None
     interval: str
     model_name: str
-    training_type: str  # lora | linear_probe | full_ft
+    training_components: list[str]
+    train_window_size: int
     version: str
     status: str
     artifact_path: str
     metrics: dict[str, Any] | None = None
     params: dict[str, Any] | None = None
+    id: int | None = None
+    created_at: str | None = None
 
 
 class ModelRegistryPort(Protocol):
-    def upsert(self, item: ModelArtifact) -> None: ...
+    def upsert(self, item: ModelArtifact) -> int:
+        """Сохраняет/обновляет артефакт, возвращает его id."""
+        ...
+
+    def get_by_id(self, artifact_id: int) -> ModelArtifact | None:
+        """Возвращает артефакт по id или None."""
+        ...
+
     def find_ready(
             self,
             symbol: str,
             interval: str,
             model_name: str,
-            training_type: str,
             market: str | None = None,
-    ) -> list[ModelArtifact]: ...
+    ) -> list[ModelArtifact]:
+        """Возвращает все артефакты со статусом 'ready' для данного инструмента."""
+        ...
+
+    def list_all(self) -> list[ModelArtifact]:
+        """Все артефакты в реестре (для GET /artifacts эндпоинта)."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -254,10 +291,12 @@ class BacktestRunRecord:
     """
     Снапшот одного walk-forward бэктеста (или его CV-фолда).
 
-    Поля идентификации позволяют запросом «найти лучший конфиг для
-    (model, ticker, source, interval, has_lora)» получить нужный run.
+    Идентификация артефакта (если использовался адаптер):
+      artifact_id         — id записи в model_artifacts, None для base модели
+      applied_components  — список компонентов которые были применены
+                            (["lora"], ["head"], ["lora", "head"]) или []  для base
 
-    Связи:
+    Связи runs:
       sweep_id      — None для standalone runs; одинаковый id для всех runs
                       одного sweep (включая CV-фолды)
       parent_run_id — для CV-фолдов: ссылка на primary run, который проверяется.
@@ -269,8 +308,8 @@ class BacktestRunRecord:
     ticker: str
     source: str
     interval: str
-    has_lora: bool
-    lora_artifact_id: int | None
+    artifact_id: int | None
+    applied_components: list[str]
 
     # Параметры бэктеста (snapshot)
     train_window_mode: str
@@ -320,7 +359,7 @@ class BacktestRepositoryPort(Protocol):
             ticker: str | None = None,
             source: str | None = None,
             interval: str | None = None,
-            has_lora: bool | None = None,
+            artifact_id: int | None = None,
             sweep_id: int | None = None,
             limit: int = 100,
             offset: int = 0,

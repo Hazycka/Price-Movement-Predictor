@@ -28,7 +28,23 @@ BacktestSweepRunner — поиск оптимального train_window_size (�
 """
 from __future__ import annotations
 
+import sys
 from typing import Any
+
+
+def _is_debugger_active() -> bool:
+    """
+    Эвристика: запущено ли приложение под Python-отладчиком.
+
+    Проверяем два признака:
+      1. sys.gettrace() — установлен trace-callback (характерно для pdb/PyDev/IPython)
+      2. модуль 'pydevd' в sys.modules — PyDev/Rider/PyCharm подгружают его при debug
+
+    Используется как guard перед параллельным запуском sweep'а: spawn-multiprocessing
+    под PyDev на Windows нестабилен (child-процессы могут зависнуть при попытке
+    debugger'а прицепиться). Падаем в sequential в таком случае.
+    """
+    return sys.gettrace() is not None or "pydevd" in sys.modules
 
 from ...schemas import (
     BacktestRequest,
@@ -41,7 +57,10 @@ from ...schemas import (
 from ...storage import get_uow_factory
 from ...storage.ports import BacktestRunRecord
 from .backtest_runner import BacktestRunner
-from .ranking import ranking_value, ranking_lcb, overlapping_with_top, select_recommended
+from .ranking import (
+    ranking_value, ranking_lcb, overlapping_with_top,
+    resolve_metric_key, select_recommended,
+)
 
 
 # Coarse grid — log-spaced с фактором 2
@@ -87,7 +106,10 @@ class BacktestSweepRunner:
         history_len = len(candles)
         horizon = request.horizon
         step = request.step if request.step is not None else horizon
-        ranking_metric: RankingMetric = request.ranking_metric
+        # ranking_metric — внутри sweep'а это уже резолвенный ключ в metrics dict
+        # ('skill_mae_close' или 'skill_mae'). Пользователь же передаёт логическое
+        # имя 'skill' — резолвим один раз тут на основе backtest_target.
+        ranking_metric = resolve_metric_key(request.ranking_metric, request.backtest_target)
 
         model_info = self.model.get_info()
         model_max_context = int(model_info.get("context_length", 8192))
@@ -104,25 +126,24 @@ class BacktestSweepRunner:
                 f"коротка для horizon={horizon} с минимальным контекстом {_COARSE_GRID[0]}."
             )
 
-        config_results: list[dict[str, Any]] = []
-        for ctx in coarse_grid:
-            result = self._run_single(
-                request, source, dates, candles, train_window_size=ctx,
-                pass_type="coarse", sweep_id=sweep_id, ranking_metric=ranking_metric,
-            )
-            config_results.append(result)
+        config_results: list[dict[str, Any]] = self._run_pass(
+            request, source, dates, candles,
+            contexts=coarse_grid, pass_type="coarse",
+            sweep_id=sweep_id, ranking_metric=ranking_metric,
+        )
 
         # --- Phase B: refinement ---
         if request.enable_refinement and config_results:
             refinement_contexts = self._build_refinement_grid(
                 config_results, coarse_grid, history_len, horizon, step, model_max_context,
             )
-            for ctx in refinement_contexts:
-                result = self._run_single(
-                    request, source, dates, candles, train_window_size=ctx,
-                    pass_type="refinement", sweep_id=sweep_id, ranking_metric=ranking_metric,
+            if refinement_contexts:
+                refinement_results = self._run_pass(
+                    request, source, dates, candles,
+                    contexts=refinement_contexts, pass_type="refinement",
+                    sweep_id=sweep_id, ranking_metric=ranking_metric,
                 )
-                config_results.append(result)
+                config_results.extend(refinement_results)
 
         # --- Phase C+D: отбор CV-кандидатов и сам CV ---
         # Раньше эти две фазы были разделены, и из-за того что _run_single
@@ -289,6 +310,7 @@ class BacktestSweepRunner:
             bootstrap_iterations=sweep_req.bootstrap_iterations,
             ci_z_score=sweep_req.ci_z_score,
             inference_batch_size=sweep_req.inference_batch_size,
+            artifact_id=sweep_req.artifact_id,
             persist=False,
             # Прокидываем флаг подробности в inner backtests:
             # detailed_logs=True → per-window details сохранятся в БД (полезно для дебага CV),
@@ -307,13 +329,23 @@ class BacktestSweepRunner:
             cv_fold_index: int | None = None,
     ) -> int:
         meta = response.metadata
+
+        # Подтягиваем applied_components из артефакта (если был)
+        artifact_id = sweep_req.artifact_id
+        applied_components: list[str] = []
+        if artifact_id is not None:
+            with get_uow_factory()() as uow:
+                artifact = uow.model_registry.get_by_id(artifact_id)
+            if artifact is not None:
+                applied_components = list(artifact.training_components or [])
+
         record = BacktestRunRecord(
             model_name=response.model.get("name", "unknown"),
             ticker=source,
             source=sweep_req.data_source,
             interval=sweep_req.interval,
-            has_lora=False,
-            lora_artifact_id=None,
+            artifact_id=artifact_id,
+            applied_components=applied_components,
             train_window_mode=meta.get("train_window_mode", sweep_req.train_window_mode),
             train_window_size=train_window_size,
             horizon=sweep_req.horizon,
@@ -339,6 +371,133 @@ class BacktestSweepRunner:
         with get_uow_factory()() as uow:
             return uow.backtest_repository.save_run(record)
 
+    def _run_pass(
+            self,
+            sweep_req: BacktestSweepRequest,
+            source: str,
+            dates: list[str],
+            candles: list[dict[str, float]],
+            contexts: list[int],
+            pass_type: str,
+            sweep_id: int,
+            ranking_metric: RankingMetric,
+    ) -> list[dict[str, Any]]:
+        """
+        Прогоняет список train_window_size для одной фазы (coarse или refinement).
+
+        Решение sequential vs parallel:
+          - parallel_workers <= 1 → sequential в главном процессе
+          - parallel_workers > 1 + работаем под отладчиком (PyDev/Rider/PyCharm) →
+            FALLBACK на sequential с warning'ом в логах. PyDev плохо работает
+            с multiprocessing spawn на Windows: child-процессы крашатся при
+            попытке debugger'а к ним прицепиться. Чтобы получить параллелизм под
+            отладкой: отключи "Attach to subprocess automatically while debugging"
+            в настройках Rider/PyCharm.
+          - parallel_workers > 1 + обычный run → параллельно через
+            ProcessPoolExecutor.
+        """
+        workers = sweep_req.parallel_workers
+        if workers > 1 and _is_debugger_active():
+            import logging
+            logging.getLogger(__name__).warning(
+                "[sweep] parallel_workers=%d запрошено, но обнаружен отладчик. "
+                "Падаю в sequential (parallel_workers=1). Чтобы получить параллелизм "
+                "под отладкой — отключи 'Attach to subprocess automatically' в IDE.",
+                workers,
+            )
+            workers = 1
+
+        if workers <= 1:
+            return [
+                self._run_single(
+                    sweep_req, source, dates, candles, train_window_size=ctx,
+                    pass_type=pass_type, sweep_id=sweep_id, ranking_metric=ranking_metric,
+                )
+                for ctx in contexts
+            ]
+        return self._run_pass_parallel(
+            sweep_req, source, dates, candles,
+            contexts=contexts, pass_type=pass_type,
+            sweep_id=sweep_id, ranking_metric=ranking_metric,
+        )
+
+    def _run_pass_parallel(
+            self,
+            sweep_req: BacktestSweepRequest,
+            source: str,
+            dates: list[str],
+            candles: list[dict[str, float]],
+            contexts: list[int],
+            pass_type: str,
+            sweep_id: int,
+            ranking_metric: RankingMetric,
+    ) -> list[dict[str, Any]]:
+        """
+        Параллельный путь: отправляет все контексты в process pool, собирает
+        результаты по мере готовности. Worker процессы сохраняют свои runs в БД
+        самостоятельно (с sweep_id), главный процесс получает компактный dict
+        с метриками и run_id.
+        """
+        from .parallel_pool import get_pool
+        from concurrent.futures import as_completed
+
+        pool = get_pool(sweep_req.parallel_workers)
+
+        # Готовим payload для каждого контекста
+        payloads = []
+        for ctx in contexts:
+            bt_req = self._build_request_for_context(sweep_req, ctx)
+            payloads.append({
+                "request_dict":  bt_req.model_dump(),
+                "source":        source,
+                "dates":         dates,
+                "candles":       candles,
+                "ticker":        source,
+                "sweep_id":      sweep_id,
+                "parent_run_id": None,
+                "cv_fold_index": None,
+                "_ctx":          ctx,  # внутренний маркер для маппинга результата
+            })
+
+        # Submit + collect
+        from ._worker import run_backtest_task
+        future_to_ctx: dict = {}
+        for payload in payloads:
+            ctx = payload.pop("_ctx")
+            future_to_ctx[pool.submit(run_backtest_task, payload)] = ctx
+
+        results_by_ctx: dict[int, dict[str, Any]] = {}
+        for fut in as_completed(future_to_ctx):
+            ctx = future_to_ctx[fut]
+            result_dict = fut.result()  # пробрасывает exception если был
+            response_dict = result_dict["response"]
+            run_id = result_dict["run_id"]
+
+            mean_val = response_dict["metrics"].get(ranking_metric, 0.0)
+            ci = response_dict["metrics_ci"].get(ranking_metric, [mean_val, mean_val])
+            if ci is None:
+                ci = [mean_val, mean_val]
+
+            results_by_ctx[ctx] = {
+                "train_window_size":    ctx,
+                "pass_type":            pass_type,
+                "primary_run_id":       run_id,
+                "windows_count":        response_dict["windows_count"],
+                "metrics":              response_dict["metrics"],
+                "metrics_ci":           response_dict["metrics_ci"] or {},
+                "metrics_lcb":          response_dict["metrics_lcb"] or {},
+                "ranking_metric_value": ranking_value(ranking_metric, mean_val),
+                "ranking_metric_lcb":   ranking_lcb(ranking_metric, mean_val, ci[0], ci[1]),
+                "cv_status":            "not_selected",
+                "cv_folds_used":        None,
+                "cv_metrics_mean":      None,
+                "cv_metrics_std":       None,
+                "cv_ranking_metric_lcb": None,
+            }
+
+        # Возвращаем в исходном порядке контекстов (для воспроизводимости логов)
+        return [results_by_ctx[ctx] for ctx in contexts]
+
     def _run_single(
             self,
             sweep_req: BacktestSweepRequest,
@@ -350,7 +509,7 @@ class BacktestSweepRunner:
             sweep_id: int,
             ranking_metric: RankingMetric,
     ) -> dict[str, Any]:
-        """Один primary run для конкретного контекста."""
+        """Один primary run для конкретного контекста (sequential путь)."""
         bt_req = self._build_request_for_context(sweep_req, train_window_size)
         response = self.runner.run(bt_req, source, dates, candles)
         run_id = self._save_run(sweep_req, response, source, train_window_size, sweep_id)

@@ -51,6 +51,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <h2>Кривая: train_window_size → метрика (LCB)</h2>
 <div id="curve"></div>
 
+{diff_section}
+
 <h2>Все runs ({count})</h2>
 {table}
 
@@ -198,37 +200,115 @@ def _build_table(records: list[BacktestRunRecord], recommended_sweep_ids: set[in
 
 
 def build_dashboard_html(
-        ticker: str | None,
-        source: str | None,
-        interval: str | None,
-        model_name: str | None,
+        ticker: str | None = None,
+        source: str | None = None,
+        interval: str | None = None,
+        model_name: str | None = None,
+        sweep_ids: list[int] | None = None,
 ) -> str:
     """
-    Собирает HTML-страницу со всеми runs, подходящими под фильтр.
-    Если фильтр пустой — берёт все runs.
+    Собирает HTML-страницу со всеми runs.
+
+    Два режима фильтрации:
+      A) sweep_ids — если задан, показываем ТОЛЬКО эти sweep'ы (для сравнения,
+         например base vs LoRA). Остальные фильтры игнорируются. Каждый sweep
+         рисуется отдельной кривой; в таблице — все runs всех sweep'ов с
+         подписями к какому sweep'у принадлежит.
+      B) ticker/source/interval/model_name — фильтрация по конкретному
+         инструменту/модели. Показывает все runs прошедшие фильтр.
+         Использовать когда нужен общий обзор без фокуса на конкретные sweep'ы.
     """
     with get_uow_factory()() as uow:
-        records = uow.backtest_repository.get_runs(
-            model_name=model_name, ticker=ticker, source=source, interval=interval,
-            limit=1000, offset=0,
-        )
+        if sweep_ids:
+            records: list[BacktestRunRecord] = []
+            for sid in sweep_ids:
+                records.extend(uow.backtest_repository.get_sweep_runs(sid))
+        else:
+            records = uow.backtest_repository.get_runs(
+                model_name=model_name, ticker=ticker, source=source, interval=interval,
+                limit=1000, offset=0,
+            )
 
-    title_parts = [p for p in (ticker, interval, model_name) if p]
-    title = " · ".join(title_parts) if title_parts else "all runs"
-    meta = (
-        f"ticker={ticker or 'все'}, source={source or 'все'}, "
-        f"interval={interval or 'все'}, model={model_name or 'все'} · "
-        f"найдено runs: {len(records)}"
-    )
+    if sweep_ids:
+        title = f"sweeps {','.join(str(s) for s in sweep_ids)}"
+        meta = f"Сравнение sweep'ов: {', '.join(str(s) for s in sweep_ids)} · runs: {len(records)}"
+    else:
+        title_parts = [p for p in (ticker, interval, model_name) if p]
+        title = " · ".join(title_parts) if title_parts else "all runs"
+        meta = (
+            f"ticker={ticker or 'все'}, source={source or 'все'}, "
+            f"interval={interval or 'все'}, model={model_name or 'все'} · "
+            f"найдено runs: {len(records)}"
+        )
 
     curve_traces, curve_layout = _build_curve(records)
     table_html = _build_table(records, recommended_sweep_ids=set())
+    diff_html = _build_diff_table(records) if sweep_ids and len(sweep_ids) >= 2 else ""
 
     return _HTML_TEMPLATE.format(
         title=title,
         meta=meta,
         count=len(records),
         table=table_html,
+        diff_section=diff_html,
         curve_data=json.dumps(curve_traces),
         curve_layout=json.dumps(curve_layout),
     )
+
+
+def _build_diff_table(records: list[BacktestRunRecord]) -> str:
+    """
+    Дифф-таблица: для каждого train_window_size показывает значения метрики
+    в каждом sweep'е и diff между ними.
+    """
+    primary = [r for r in records if r.cv_fold_index is None]
+    if not primary:
+        return ""
+
+    metric_name = _ranking_metric_for_target(primary[0].backtest_target)
+
+    # Группируем: ctx -> {sweep_id -> value}
+    by_ctx: dict[int, dict[int | None, float]] = {}
+    sweep_set: set[int | None] = set()
+    for r in primary:
+        sweep_set.add(r.sweep_id)
+        by_ctx.setdefault(r.train_window_size, {})[r.sweep_id] = r.metrics.get(metric_name, 0.0)
+
+    sweep_ids_sorted = sorted([s for s in sweep_set if s is not None])
+    if len(sweep_ids_sorted) < 2:
+        return ""
+
+    # Базовый sweep — первый в списке. Остальные сравниваются с ним.
+    base_id = sweep_ids_sorted[0]
+
+    header_cols = ["ctx"]
+    for sid in sweep_ids_sorted:
+        header_cols.append(f"sweep #{sid}")
+    for sid in sweep_ids_sorted[1:]:
+        header_cols.append(f"Δ vs #{base_id}")
+
+    rows: list[str] = []
+    for ctx in sorted(by_ctx):
+        cells = [str(ctx)]
+        base_val = by_ctx[ctx].get(base_id)
+        for sid in sweep_ids_sorted:
+            v = by_ctx[ctx].get(sid)
+            cells.append(_format_value(v))
+        for sid in sweep_ids_sorted[1:]:
+            v = by_ctx[ctx].get(sid)
+            if v is not None and base_val is not None:
+                d = v - base_val
+                color = "color:#7cd97c" if d > 0 else ("color:#d97c7c" if d < 0 else "")
+                cells.append(f'<span style="{color}">{d:+.4f}</span>')
+            else:
+                cells.append("—")
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+
+    head = "".join(f"<th>{c}</th>" for c in header_cols)
+    return f"""
+<h2>Сравнение sweep'ов по метрике <code>{metric_name}</code></h2>
+<table>
+<thead><tr>{head}</tr></thead>
+<tbody>{''.join(rows)}</tbody>
+</table>
+"""

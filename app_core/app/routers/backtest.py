@@ -59,27 +59,27 @@ def _run_to_dict(record, detailed: bool) -> dict:
        все поля включая metrics_ci, metrics_lcb, metadata.
     """
     base = {
-        "id":                 record.id,
-        "model_name":         record.model_name,
-        "ticker":             record.ticker,
-        "source":             record.source,
-        "interval":           record.interval,
-        "has_lora":           record.has_lora,
-        "train_window_mode":  record.train_window_mode,
-        "train_window_size":  record.train_window_size,
-        "horizon":            record.horizon,
-        "step":               record.step,
-        "backtest_target":    record.backtest_target,
-        "windows_count":      record.windows_count,
-        "history_length":     record.history_length,
-        "sweep_id":           record.sweep_id,
-        "parent_run_id":      record.parent_run_id,
-        "cv_fold_index":      record.cv_fold_index,
-        "created_at":         record.created_at,
+        "id":                  record.id,
+        "model_name":          record.model_name,
+        "ticker":              record.ticker,
+        "source":              record.source,
+        "interval":            record.interval,
+        "artifact_id":         record.artifact_id,
+        "applied_components":  record.applied_components,
+        "train_window_mode":   record.train_window_mode,
+        "train_window_size":   record.train_window_size,
+        "horizon":             record.horizon,
+        "step":                record.step,
+        "backtest_target":     record.backtest_target,
+        "windows_count":       record.windows_count,
+        "history_length":      record.history_length,
+        "sweep_id":            record.sweep_id,
+        "parent_run_id":       record.parent_run_id,
+        "cv_fold_index":       record.cv_fold_index,
+        "created_at":          record.created_at,
     }
     if detailed:
         base.update({
-            "lora_artifact_id":           record.lora_artifact_id,
             "evaluation_weights":         record.evaluation_weights,
             "weight_first_to_last_ratio": record.weight_first_to_last_ratio,
             "bootstrap_iterations":       record.bootstrap_iterations,
@@ -101,15 +101,15 @@ def _run_to_dict(record, detailed: bool) -> dict:
 @router.get("/runs")
 @endpoint_errors("Ошибка получения runs")
 def list_runs(
-        model_name: str | None = Query(None, description="Фильтр по имени модели"),
-        ticker:     str | None = Query(None, description="Фильтр по тикеру"),
-        source:     str | None = Query(None, description="Фильтр по источнику (t_invest/yfinance/csv)"),
-        interval:   str | None = Query(None, description="Фильтр по интервалу"),
-        has_lora:   bool | None = Query(None, description="Фильтр: с LoRA или без"),
-        sweep_id:   int | None = Query(None, description="Только runs одного sweep'а"),
-        limit:      int = Query(100, ge=1, le=1000),
-        offset:     int = Query(0, ge=0),
-        detailed:   bool = Query(False, description="Полная выдача со всеми метриками и metadata"),
+        model_name:  str | None = Query(None, description="Фильтр по имени модели"),
+        ticker:      str | None = Query(None, description="Фильтр по тикеру"),
+        source:      str | None = Query(None, description="Фильтр по источнику (t_invest/yfinance/csv)"),
+        interval:    str | None = Query(None, description="Фильтр по интервалу"),
+        artifact_id: int | None = Query(None, description="Фильтр по id дообученного артефакта; null/0 → только base модель"),
+        sweep_id:    int | None = Query(None, description="Только runs одного sweep'а"),
+        limit:       int = Query(100, ge=1, le=1000),
+        offset:      int = Query(0, ge=0),
+        detailed:    bool = Query(False, description="Полная выдача со всеми метриками и metadata"),
 ) -> dict:
     """
     Список runs с фильтрами. По умолчанию краткая выдача — для UI-таблиц.
@@ -118,7 +118,7 @@ def list_runs(
     with get_uow_factory()() as uow:
         records = uow.backtest_repository.get_runs(
             model_name=model_name, ticker=ticker, source=source, interval=interval,
-            has_lora=has_lora, sweep_id=sweep_id, limit=limit, offset=offset,
+            artifact_id=artifact_id, sweep_id=sweep_id, limit=limit, offset=offset,
         )
     return {
         "count": len(records),
@@ -159,14 +159,37 @@ def get_sweep(sweep_id: int, detailed: bool = Query(False)) -> dict:
 @router.get("/dashboard", response_class=HTMLResponse)
 @endpoint_errors("Dashboard failed")
 def dashboard(
-        ticker:     str | None = Query(None),
-        source:     str | None = Query(None),
-        interval:   str | None = Query(None),
-        model_name: str | None = Query(None),
+        ticker:     str | None = Query(None, description="Фильтр по тикеру"),
+        source:     str | None = Query(None, description="Фильтр по источнику"),
+        interval:   str | None = Query(None, description="Фильтр по интервалу"),
+        model_name: str | None = Query(None, description="Фильтр по модели"),
+        sweep_ids:  str | None = Query(
+            None,
+            description=(
+                "Список sweep_id через запятую (например '20,21,22') для сравнения. "
+                "Если задан — остальные фильтры игнорируются, кривые рисуются по каждому sweep'у, "
+                "снизу появляется diff-таблица показывающая Δ метрики между ними."
+            )
+        ),
 ) -> HTMLResponse:
     """
-    HTML страница с кривой train_window_size → метрика и таблицей всех runs
-    по выбранному фильтру. Без фильтра — показывает все доступные runs.
+    HTML страница с кривой train_window_size → метрика и таблицей всех runs.
+
+    Два режима:
+      A) sweep_ids='20,21' — сравниваем конкретные sweep'ы (base vs LoRA и т.п.)
+      B) Без sweep_ids — фильтрация по ticker/source/interval/model_name.
     """
-    html = build_dashboard_html(ticker=ticker, source=source, interval=interval, model_name=model_name)
+    parsed_sweep_ids = None
+    if sweep_ids:
+        try:
+            parsed_sweep_ids = [int(s.strip()) for s in sweep_ids.split(",") if s.strip()]
+        except ValueError as ex:
+            raise HTTPException(
+                status_code=400,
+                detail=f"sweep_ids должен быть списком целых через запятую (например '20,21,22'), а не '{sweep_ids}'",
+            ) from ex
+    html = build_dashboard_html(
+        ticker=ticker, source=source, interval=interval, model_name=model_name,
+        sweep_ids=parsed_sweep_ids,
+    )
     return HTMLResponse(content=html)
