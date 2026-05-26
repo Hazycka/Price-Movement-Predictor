@@ -14,14 +14,20 @@ from typing import Callable
 
 from fastapi import HTTPException
 
-from ..models.factory import create_model
+from ..models.factory import get_inference_model
 from ..services.forecast_service import ForecastService
 from ..services.market_data.exceptions import DataUnavailableError
 
 
 def service_for_model(model_name: str | None) -> ForecastService:
-    """Создаёт ForecastService с моделью по имени (или дефолтной если None)."""
-    return ForecastService(model=create_model(model_name))
+    """
+    Создаёт ForecastService на основе синглтона модели по имени.
+
+    Модель — общий инстанс между запросами (см. get_inference_model). Сам
+    ForecastService лёгкий — пересоздаётся на каждый запрос, обёртывая
+    переиспользуемую модель.
+    """
+    return ForecastService(model=get_inference_model(model_name))
 
 
 def data_unavailable_to_http(ex: DataUnavailableError) -> HTTPException:

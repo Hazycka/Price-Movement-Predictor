@@ -31,6 +31,7 @@ from datetime import timezone
 
 import pandas as pd
 
+from .common import is_absolute_date, parse_history_period
 from .exceptions import DataUnavailableError, _RangeInfo
 from .factory import get_market_data_provider
 from ...storage import get_uow_factory
@@ -38,20 +39,6 @@ from ...storage.ports import CandleRow
 from ...schemas import ProviderOptions, TInvestProviderOptions, YahooProviderOptions
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_history_period(period: str) -> pd.DateOffset:
-    value = int(period[:-1])
-    unit = period[-1]
-    if unit == "d":
-        return pd.DateOffset(days=value)
-    if unit == "w":
-        return pd.DateOffset(weeks=value)
-    if unit == "m":
-        return pd.DateOffset(months=value)
-    if unit == "y":
-        return pd.DateOffset(years=value)
-    raise ValueError(f"Неподдерживаемый формат history_period: {period}")
 
 
 _GAP_TOLERANCE = pd.Timedelta(days=7)
@@ -70,15 +57,21 @@ def _has_significant_gap(earlier_dt: str, later_dt: str) -> bool:
 
 def _resolve_date_range(history_period: str, history_up_to: str | None) -> tuple[str, str]:
     """
-    Конвертирует history_period + history_up_to в конкретные даты.
-    Возвращает (from_dt, to_dt) в формате ISO строк.
+    Конвертирует history_period + history_up_to в конкретные даты (ISO строки).
+
+    Поддерживает два формата history_period:
+      - Относительный ('1y', '6mo', '14d', '2w') — отсчитывается от to_dt
+      - Абсолютный ('2021-05-22' или ISO 8601) — start берётся как есть
     """
     if history_up_to:
         to_dt = pd.to_datetime(history_up_to, utc=True)
     else:
         to_dt = pd.Timestamp.now(tz=timezone.utc)
 
-    from_dt = to_dt - _parse_history_period(history_period)
+    if is_absolute_date(history_period):
+        from_dt = pd.to_datetime(history_period, utc=True)
+    else:
+        from_dt = to_dt - parse_history_period(history_period)
 
     return from_dt.isoformat(), to_dt.isoformat()
 

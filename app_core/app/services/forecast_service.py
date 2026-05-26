@@ -62,7 +62,10 @@ class ForecastService:
 
     def build_chart(self, request: ForecastRequest) -> str:
         result = self.run_forecast(request)
-        return self._chart_service.build(result)
+        return self._chart_service.build(
+            result,
+            max_chart_history_candles=request.max_chart_history_candles,
+        )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -90,7 +93,7 @@ class ForecastService:
             with get_uow_factory()() as uow:
                 artifact = uow.model_registry.get_by_id(artifact_id)
             if artifact is not None:
-                applied_components = list(artifact.training_components or [])
+                applied_components = _resolve_applied_components(artifact)
 
         record = BacktestRunRecord(
             model_name=response.model.get("name", "unknown"),
@@ -120,3 +123,37 @@ class ForecastService:
         )
         with get_uow_factory()() as uow:
             return uow.backtest_repository.save_run(record)
+
+
+# ---------------------------------------------------------------------------
+# applied_components resolution
+# ---------------------------------------------------------------------------
+
+# Канонический порядок применения компонентов (тот же что в ArtifactLoader.apply).
+# Используется для нормализации applied_components чтобы всегда был стабильный
+# порядок head → input → lora → full_ft, независимо от того в каком порядке
+# их перечислили в БД.
+_APPLY_ORDER = ("head", "input", "lora", "full_ft")
+
+
+def _resolve_applied_components(artifact) -> list[str]:
+    """
+    Собирает «реально применённые компоненты» с учётом transitive-ссылок.
+
+    Прямые компоненты артефакта (artifact.training_components) расширяются:
+      - Если артефакт = LoRA и в params есть base_head_artifact_id → добавить 'head'
+      - Если есть base_input_artifact_id → добавить 'input'
+
+    Результат сортируется в каноническом порядке применения. Это даёт точный
+    answer на вопрос «какая модель реально применялась в этом backtest run'е»:
+      LoRA #Z с base_head=X, base_input=Y → applied_components=["head","input","lora"]
+    Это видно в /backtest/runs и в dashboard, понятно при анализе результатов.
+    """
+    direct = set(artifact.training_components or [])
+    params = artifact.params or {}
+    if "lora" in direct:
+        if params.get("base_head_artifact_id"):
+            direct.add("head")
+        if params.get("base_input_artifact_id"):
+            direct.add("input")
+    return [c for c in _APPLY_ORDER if c in direct]

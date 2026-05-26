@@ -33,6 +33,7 @@ def init_sqlite_schema(db_path: str) -> None:
                            CREATE TABLE IF NOT EXISTS model_artifacts (
                                                                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                                                                           symbol TEXT NOT NULL,
+                                                                          source TEXT NOT NULL,
                                                                           market TEXT,
                                                                           interval TEXT NOT NULL,
                                                                           model_name TEXT NOT NULL,
@@ -45,7 +46,7 @@ def init_sqlite_schema(db_path: str) -> None:
                                                                           artifact_path TEXT NOT NULL,
                                                                           created_at TEXT NOT NULL DEFAULT (datetime('now')),
                                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                               UNIQUE(symbol, market, interval, model_name, training_components_json, train_window_size, version)
+                               UNIQUE(symbol, source, interval, model_name, training_components_json, train_window_size, version)
                                );
 
                            CREATE TABLE IF NOT EXISTS provider_state (
@@ -165,6 +166,7 @@ class SQLiteModelRegistryRepo:
         return ModelArtifact(
             id=r["id"],
             symbol=r["symbol"],
+            source=r["source"],
             market=r["market"],
             interval=r["interval"],
             model_name=r["model_name"],
@@ -179,17 +181,60 @@ class SQLiteModelRegistryRepo:
         )
 
     def upsert(self, item: ModelArtifact) -> int:
+        """
+        Если у item уже есть id — делаем UPDATE WHERE id=? (явное обновление ряда,
+        полученного в предыдущем upsert). Это критично для двухстадийного сохранения
+        в ArtifactSaver: Stage 1 создаёт placeholder и получает id, Stage 3 обновляет
+        тот же ряд с финальными status/metrics/artifact_path.
+
+        Если id нет — INSERT с ON CONFLICT по natural-key
+            (symbol, source, interval, model_name, training_components, train_window_size, version)
+        market в UNIQUE НЕ входит — это информативная колонка (биржевая секция),
+        не часть «идентичности» артефакта. source (провайдер) обязателен (NOT NULL),
+        что гарантирует корректный матчинг при ON CONFLICT.
+
+        Возвращает id (новый или существующий).
+        """
         components_json = json.dumps(item.training_components, ensure_ascii=False)
+
+        if item.id is not None:
+            # Stage 3: явный UPDATE существующего ряда. natural-key поля не трогаем
+            # (между Stage 1 и Stage 3 они не меняются), но обновляем market — он
+            # может быть выставлен только сейчас, если в Stage 1 его ещё не знали.
+            self.conn.execute(
+                """
+                UPDATE model_artifacts
+                   SET market=?,
+                       status=?,
+                       metrics_json=?,
+                       params_json=?,
+                       artifact_path=?,
+                       updated_at=datetime('now')
+                 WHERE id=?
+                """,
+                (
+                    item.market,
+                    item.status,
+                    self._to_json(item.metrics),
+                    self._to_json(item.params),
+                    item.artifact_path,
+                    item.id,
+                ),
+            )
+            return item.id
+
+        # Новый артефакт / Stage 1
         cursor = self.conn.execute(
             """
             INSERT INTO model_artifacts (
-                symbol, market, interval, model_name,
+                symbol, source, market, interval, model_name,
                 training_components_json, train_window_size, version,
                 status, metrics_json, params_json, artifact_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, market, interval, model_name,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, source, interval, model_name,
                             training_components_json, train_window_size, version)
             DO UPDATE SET
+                market=excluded.market,
                 status=excluded.status,
                 metrics_json=excluded.metrics_json,
                 params_json=excluded.params_json,
@@ -198,7 +243,8 @@ class SQLiteModelRegistryRepo:
             RETURNING id
             """,
             (
-                item.symbol, item.market, item.interval, item.model_name,
+                item.symbol, item.source, item.market,
+                item.interval, item.model_name,
                 components_json, item.train_window_size, item.version,
                 item.status,
                 self._to_json(item.metrics), self._to_json(item.params),
@@ -223,18 +269,31 @@ class SQLiteModelRegistryRepo:
             symbol: str,
             interval: str,
             model_name: str,
-            market: str | None = None,
+            source: str | None = None,
     ) -> list[ModelArtifact]:
-        rows = self.conn.execute(
-            """
-            SELECT * FROM model_artifacts
-            WHERE symbol=? AND interval=? AND model_name=?
-              AND status='ready'
-              AND (market=? OR (? IS NULL AND market IS NULL))
-            ORDER BY updated_at DESC
-            """,
-            (symbol, interval, model_name, market, market),
-        ).fetchall()
+        """
+        Поиск готовых артефактов. source опционален — без него вернутся артефакты
+        со всех провайдеров (используется в админских/диагностических запросах).
+        """
+        if source is None:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM model_artifacts
+                WHERE symbol=? AND interval=? AND model_name=? AND status='ready'
+                ORDER BY updated_at DESC
+                """,
+                (symbol, interval, model_name),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM model_artifacts
+                WHERE symbol=? AND interval=? AND model_name=? AND status='ready'
+                  AND source=?
+                ORDER BY updated_at DESC
+                """,
+                (symbol, interval, model_name, source),
+            ).fetchall()
         return [self._row_to_artifact(r) for r in rows]
 
     def list_all(self) -> list[ModelArtifact]:
@@ -497,6 +556,41 @@ class SQLiteCandleRepository:
             to_dt: str,
             reason: str,
     ) -> None:
+        """
+        Регистрирует диапазон [from_dt, to_dt] как «недоступный у провайдера».
+
+        ДЕДУП: если существующий ряд для того же (ticker, source, interval)
+        уже ПОКРЫВАЕТ запрошенный диапазон (existing.from_dt <= from_dt и
+        existing.to_dt >= to_dt) — новый ряд НЕ создаётся. Это решает проблему
+        когда повторные запросы с разным "now" (из-за микросекундной разницы
+        в from_dt) накапливают сотни одинаковых по смыслу записей.
+
+        Если новый диапазон ПОКРЫВАЕТ существующие — удаляем старые (новый шире,
+        поглощает их).
+        """
+        existing = self.conn.execute(
+            """
+            SELECT from_dt, to_dt FROM candle_unavailable_ranges
+             WHERE ticker=? AND source=? AND interval=?
+               AND from_dt <= ? AND to_dt >= ?
+             LIMIT 1
+            """,
+            (ticker, source, interval, from_dt, to_dt),
+        ).fetchone()
+        if existing is not None:
+            # Уже покрыт более широким (или идентичным) рядом — выходим
+            return
+
+        # Удаляем ряды, которые поглощаются новым (новый шире или равен)
+        self.conn.execute(
+            """
+            DELETE FROM candle_unavailable_ranges
+             WHERE ticker=? AND source=? AND interval=?
+               AND from_dt >= ? AND to_dt <= ?
+            """,
+            (ticker, source, interval, from_dt, to_dt),
+        )
+
         self.conn.execute(
             """
             INSERT INTO candle_unavailable_ranges

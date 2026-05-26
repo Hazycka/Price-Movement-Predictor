@@ -41,8 +41,38 @@ class ChronosModelOptions(BaseModel):
         description="Количество сэмплов в вероятностном прогнозе"
     )
 
+class MoiraiModelOptions(BaseModel):
+    """
+    Опции загрузки Salesforce Moirai-2.
+
+    size — определяет размер модели и model_id на HF:
+      small → Salesforce/moirai-2.0-R-small   (~17M params, быстрее)
+      base  → Salesforce/moirai-2.0-R-base    (~88M params)
+      large → Salesforce/moirai-2.0-R-large   (~311M params, точнее)
+    """
+    size: Literal["small", "base", "large"] = Field(
+        default="small",
+        description="Размер Moirai-2 модели. small/base/large соответствуют HF model_id."
+    )
+    context_length: int = Field(
+        default=4096, ge=64, le=8192,
+        description="Макс длина входного контекста (число баров)."
+    )
+    prediction_length: int = Field(
+        default=64, ge=1, le=512,
+        description="Макс длина прогноза (нативный horizon модели). horizon в запросе будет урезан до этого значения."
+    )
+    patch_size: Literal["auto", "8", "16", "32", "64", "128"] = Field(
+        default="auto",
+        description="Размер patch'а для tokenization. 'auto' — выбор модели по длине контекста."
+    )
+    num_samples: int = Field(
+        default=100, ge=10, le=500,
+        description="Число samples для оценки квантилей (Moirai даёт probabilistic output через sampling)."
+    )
+
 ProviderOptions = TInvestProviderOptions | YahooProviderOptions | CsvProviderOptions
-ModelOptions = PatchTSTModelOptions | ChronosModelOptions
+ModelOptions = PatchTSTModelOptions | ChronosModelOptions | MoiraiModelOptions
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +120,7 @@ class OHLCQuantileForecastSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ForecastRequest(BaseModel):
-    model_name: Literal["chronos", "patchtst"] | None = Field(
+    model_name: Literal["chronos", "patchtst", "moirai_2"] | None = Field(
         default=None,
         description=(
             "Выбор модели. None — использует модель по умолчанию из конфигурации сервиса. "
@@ -149,7 +179,14 @@ class ForecastRequest(BaseModel):
     )
     history_period: str = Field(
         default="1y",
-        description="Период загружаемой истории. Форматы: '6mo', '1y', '2y', '5y'. Чем длиннее — тем точнее индикаторы."
+        description=(
+            "Период загружаемой истории. Два формата: "
+            "(а) относительный — '6mo', '1y', '2y', '5y', '14d', '2w' — отсчёт от history_up_to "
+            "(или от текущего момента если history_up_to=None); "
+            "(б) абсолютная стартовая дата — '2021-05-22' или ISO 8601 — берётся как точка начала, "
+            "история подтягивается с этой даты до history_up_to (или до сейчас). "
+            "Чем длиннее период — тем точнее индикаторы."
+        )
     )
     history_up_to: str | None = Field(
         default=None,
@@ -178,6 +215,16 @@ class ForecastRequest(BaseModel):
             "None — базовая модель. См. подробное описание в BacktestBaseRequest.artifact_id."
         )
     )
+    max_chart_history_candles: int | None = Field(
+        default=300,
+        ge=1,
+        description=(
+            "ВИЗУАЛЬНОЕ ограничение для GET /chart: обрезает историческую часть графика "
+            "до последних N свечей. На сам инференс НЕ влияет — модель получает всю "
+            "историю (см. history_period). None — не обрезать. "
+            "Default 300 — компромисс между читаемостью графика и видимым контекстом."
+        )
+    )
 
     @model_validator(mode="after")
     def validate_options(self):
@@ -195,9 +242,17 @@ class ForecastRequest(BaseModel):
         if self.model_name == "patchtst":
             if self.model_options is not None and not isinstance(self.model_options, PatchTSTModelOptions):
                 raise ValueError("Для model_name='patchtst' model_options должен иметь тип PatchTSTModelOptions.")
+        elif self.model_name == "moirai_2":
+            if self.model_options is not None and not isinstance(self.model_options, MoiraiModelOptions):
+                raise ValueError("Для model_name='moirai_2' model_options должен иметь тип MoiraiModelOptions.")
+        elif self.model_name == "chronos":
+            if self.model_options is not None and not isinstance(self.model_options, ChronosModelOptions):
+                raise ValueError("Для model_name='chronos' model_options должен иметь тип ChronosModelOptions.")
         else:
             if self.model_options is not None:
-                raise ValueError("model_options задан, но model_name != 'patchtst'.")
+                raise ValueError(
+                    "model_options задан, но model_name не указан или не поддерживает options."
+                )
 
         return self
 
@@ -278,7 +333,7 @@ class BacktestBaseRequest(BaseModel):
     Валидатор согласованности data_source ↔ provider_options и model_name ↔
     model_options живёт здесь, наследуется обоими.
     """
-    model_name: Literal["chronos", "patchtst"] | None = Field(
+    model_name: Literal["chronos", "patchtst", "moirai_2"] | None = Field(
         default=None,
         description=(
             "Выбор модели. None — модель по умолчанию из конфигурации сервиса. "
@@ -452,9 +507,17 @@ class BacktestBaseRequest(BaseModel):
         if self.model_name == "patchtst":
             if self.model_options is not None and not isinstance(self.model_options, PatchTSTModelOptions):
                 raise ValueError("Для model_name='patchtst' model_options должен иметь тип PatchTSTModelOptions.")
+        elif self.model_name == "moirai_2":
+            if self.model_options is not None and not isinstance(self.model_options, MoiraiModelOptions):
+                raise ValueError("Для model_name='moirai_2' model_options должен иметь тип MoiraiModelOptions.")
+        elif self.model_name == "chronos":
+            if self.model_options is not None and not isinstance(self.model_options, ChronosModelOptions):
+                raise ValueError("Для model_name='chronos' model_options должен иметь тип ChronosModelOptions.")
         else:
             if self.model_options is not None:
-                raise ValueError("model_options задан, но model_name != 'patchtst'.")
+                raise ValueError(
+                    "model_options задан, но model_name не указан или не поддерживает options."
+                )
 
         return self
 
@@ -675,7 +738,7 @@ class TrainingBaseRequest(BaseModel):
     Часть полей похожа на BacktestBaseRequest (данные, источник), часть —
     специфичная для обучения (LR, epochs, val_split).
     """
-    model_name: Literal["chronos", "patchtst"] | None = Field(
+    model_name: Literal["chronos", "patchtst", "moirai_2"] | None = Field(
         default=None,
         description="Базовая модель для дообучения. None — модель по умолчанию."
     )
@@ -747,14 +810,37 @@ class TrainingBaseRequest(BaseModel):
 
 
 class HeadTrainingRequest(TrainingBaseRequest):
-    """Обучение только output head (linear probing). Самый простой baseline."""
-    pass
+    """
+    Обучение output head (linear probing). Baseline-режим адаптации.
+
+    Опционально (train_input_too=True) после head'ы запускается обучение input
+    projection: цепочка head → input. Артефакт получит training_components=['head']
+    и отдельно сохранится input-артефакт с training_components=['input'].
+    """
+    train_input_too: bool = Field(
+        default=False,
+        description=(
+            "Если True — после head'ы цепочкой обучается input projection. "
+            "Каноничный порядок (head → input): head обучается первой как линейная "
+            "пробинг, затем поверх неё (с её замороженными весами) обучается input. "
+            "Если False — обучается только head."
+        )
+    )
 
 
 class LoraTrainingRequest(TrainingBaseRequest):
     """
     Обучение LoRA-адаптеров через PEFT.
-    Дополнительные параметры специфичны для LoRA.
+
+    LoRA НЕ обучается «голой» — head всегда должна быть warm-start'нута до неё
+    (linear-probing-then-fine-tuning, Kumar et al. 2022). Поэтому endpoint
+    автоматически:
+      1. Находит подходящий head-артефакт в БД (через ArtifactMatcher) → reuse
+      2. Если не нашёл — тренирует head с нуля
+      3. Опционально (train_input_too=True) — тренирует/находит input
+      4. Тренирует LoRA поверх
+
+    `train_head_too` УБРАН — head нужна всегда, это не опция.
     """
     lora_r: int = Field(
         default=8, ge=1, le=256,
@@ -769,13 +855,45 @@ class LoraTrainingRequest(TrainingBaseRequest):
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "out_proj"],
         description="Список имён модулей в base-модели куда инжектить LoRA-матрицы."
     )
-    train_head_too: bool = Field(
+    train_input_too: bool = Field(
         default=False,
         description=(
-            "Если True — дополнительно обучается новая output head поверх LoRA. "
-            "Артефакт получит training_components=['lora', 'head']."
+            "Если True — в цепочке также используется input projection: "
+            "head → input → lora. Если False — только head → lora."
         )
     )
+    force_new_head_or_input: bool = Field(
+        default=False,
+        description=(
+            "Опциональное. Логика поиска head/input артефактов:\n"
+            "  • False (default) — ищем совместимый артефакт в БД:\n"
+            "      - найден с теми же hyperparams (lr/epochs/batch_size/weights) → reuse;\n"
+            "      - найден shape-совместимый, но другие hyperparams → 409 Conflict;\n"
+            "      - ничего не найдено → silent-create под req.version (без конфликта).\n"
+            "  • True — игнорируем существующие, тренируем head/input заново под "
+            "новой версией new_head_or_input_version. Используется когда хочется "
+            "перезаписать существующий артефакт при конфликте hyperparams.\n"
+            "Имя поля underscores 'head_or_input' подчёркивает: касается обоих "
+            "компонентов (если train_input_too=true) — единый switch."
+        )
+    )
+    new_head_or_input_version: str | None = Field(
+        default=None,
+        description=(
+            "Версия для свежеобученных head/input при force_new_head_or_input=true. "
+            "Обязательное при force=true, игнорируется иначе. По правилу overwrite-by-version: "
+            "если артефакт с этой версией уже есть — перезапишется."
+        )
+    )
+
+    @model_validator(mode="after")
+    def validate_force_consistency(self):
+        if self.force_new_head_or_input and not self.new_head_or_input_version:
+            raise ValueError(
+                "При force_new_head_or_input=true обязательно нужно указать "
+                "new_head_or_input_version (например 'v1', 'v2', ...)."
+            )
+        return self
 
 
 class TrainingResponse(BaseModel):

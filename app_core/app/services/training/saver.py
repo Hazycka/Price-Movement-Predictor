@@ -46,8 +46,12 @@ class SaveContext:
 
     Используется чтобы передать в saver все нужные параметры в одном объекте,
     а не длинной портянкой аргументов.
+
+    source — провайдер данных (t_invest / yahoo / csv), часть UNIQUE-ключа.
+    market — биржевая секция (TQBR, SPBXM, ...), информативно, в UNIQUE НЕ входит.
     """
     symbol: str
+    source: str
     market: str | None
     interval: str
     model_name: str
@@ -71,12 +75,22 @@ class ArtifactSaver:
             metrics: dict[str, float],
             context: SaveContext,
     ) -> int:
-        """
-        Сохраняет head state_dict в head.pt + регистрирует в БД.
-        Возвращает artifact_id.
-        """
+        """Сохраняет head state_dict в head.pt + регистрирует в БД."""
         return ArtifactSaver._save_components(
             components={"head.pt": ("head_torch", head_state_dict)},
+            metrics=metrics,
+            context=context,
+        )
+
+    @staticmethod
+    def save_input(
+            input_state_dict: dict,
+            metrics: dict[str, float],
+            context: SaveContext,
+    ) -> int:
+        """Сохраняет input projection state_dict в input.pt + регистрирует в БД."""
+        return ArtifactSaver._save_components(
+            components={"input.pt": ("input_torch", input_state_dict)},
             metrics=metrics,
             context=context,
         )
@@ -142,6 +156,7 @@ class ArtifactSaver:
         # Stage 1: создать запись с status='training'
         placeholder = ModelArtifact(
             symbol=context.symbol,
+            source=context.source,
             market=context.market,
             interval=context.interval,
             model_name=context.model_name,
@@ -163,7 +178,8 @@ class ArtifactSaver:
         try:
             for relpath, (writer_type, payload) in components.items():
                 target = artifact_dir / relpath
-                if writer_type == "head_torch":
+                if writer_type in ("head_torch", "input_torch"):
+                    # state_dict сохраняется одинаково через torch.save
                     torch.save(payload, target)
                 elif writer_type == "lora_peft":
                     # payload — peft_model
@@ -184,6 +200,7 @@ class ArtifactSaver:
                 },
                 "trained_on": {
                     "symbol": context.symbol,
+                    "source": context.source,
                     "market": context.market,
                     "interval": context.interval,
                 },
@@ -204,6 +221,7 @@ class ArtifactSaver:
             final = ModelArtifact(
                 id=artifact_id,
                 symbol=context.symbol,
+                source=context.source,
                 market=context.market,
                 interval=context.interval,
                 model_name=context.model_name,
@@ -230,6 +248,7 @@ class ArtifactSaver:
             failed = ModelArtifact(
                 id=artifact_id,
                 symbol=context.symbol,
+                source=context.source,
                 market=context.market,
                 interval=context.interval,
                 model_name=context.model_name,

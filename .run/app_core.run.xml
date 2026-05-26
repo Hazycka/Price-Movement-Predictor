@@ -11,7 +11,7 @@
     </envs>
     <option name="SDK_HOME" value="" />
     <option name="SDK_NAME" value="Python 3.11 (Price Movement Predictor)" />
-    <option name="WORKING_DIRECTORY" value="S:\Job\Price Movement Predictor\.claude\worktrees\blissful-meitner-745a90\app_core" />
+    <option name="WORKING_DIRECTORY" value="S:\Job\Price Movement Predictor\app_core" />
     <option name="IS_MODULE_SDK" value="false" />
     <option name="ADD_CONTENT_ROOTS" value="true" />
     <option name="ADD_SOURCE_ROOTS" value="true" />

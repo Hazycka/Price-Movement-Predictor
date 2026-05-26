@@ -106,10 +106,16 @@ class BacktestSweepRunner:
         history_len = len(candles)
         horizon = request.horizon
         step = request.step if request.step is not None else horizon
-        # ranking_metric — внутри sweep'а это уже резолвенный ключ в metrics dict
-        # ('skill_mae_close' или 'skill_mae'). Пользователь же передаёт логическое
-        # имя 'skill' — резолвим один раз тут на основе backtest_target.
-        ranking_metric = resolve_metric_key(request.ranking_metric, request.backtest_target)
+        # ВАЖНО: различаем два имени метрики:
+        #   request.ranking_metric — пользовательское логическое имя ('skill',
+        #     'pinball_mean', 'directional_acc'). Это Literal RankingMetric — именно
+        #     оно должно попасть в RecommendedConfig.ranking_metric / response.
+        #   metric_key — резолвенный ключ для lookup'а в metrics dict
+        #     ('skill_mae_close' / 'skill_mae' и т.п.). Используется во внутренних
+        #     вычислениях ranking_value/ranking_lcb и selection.
+        # Раньше обе сущности назывались ranking_metric — это валило Pydantic-валидацию
+        # ответа, потому что 'skill_mae_close' не входит в Literal RankingMetric.
+        metric_key = resolve_metric_key(request.ranking_metric, request.backtest_target)
 
         model_info = self.model.get_info()
         model_max_context = int(model_info.get("context_length", 8192))
@@ -129,7 +135,7 @@ class BacktestSweepRunner:
         config_results: list[dict[str, Any]] = self._run_pass(
             request, source, dates, candles,
             contexts=coarse_grid, pass_type="coarse",
-            sweep_id=sweep_id, ranking_metric=ranking_metric,
+            sweep_id=sweep_id, ranking_metric=metric_key,
         )
 
         # --- Phase B: refinement ---
@@ -141,7 +147,7 @@ class BacktestSweepRunner:
                 refinement_results = self._run_pass(
                     request, source, dates, candles,
                     contexts=refinement_contexts, pass_type="refinement",
-                    sweep_id=sweep_id, ranking_metric=ranking_metric,
+                    sweep_id=sweep_id, ranking_metric=metric_key,
                 )
                 config_results.extend(refinement_results)
 
@@ -153,7 +159,7 @@ class BacktestSweepRunner:
         # Теперь идём в один проход с явной проверкой членства по id().
         cv_candidates = overlapping_with_top(
             configs=config_results,
-            ranking_metric=ranking_metric,
+            ranking_metric=metric_key,
             lcb_tie_tolerance=request.lcb_tie_tolerance,
             max_candidates=request.cv_max_candidates,
         )
@@ -169,7 +175,7 @@ class BacktestSweepRunner:
             # в "completed" или "skipped_short_history".
             self._run_cv(
                 request, source, dates, candles, sweep_id=sweep_id,
-                config=c, ranking_metric=ranking_metric, step=step,
+                config=c, ranking_metric=metric_key, step=step,
             )
             if c["cv_status"] == "completed":
                 cv_summary["completed"] += 1
@@ -179,7 +185,7 @@ class BacktestSweepRunner:
         # --- Phase E: финальная рекомендация ---
         recommended_config, reason, margin = select_recommended(
             configs=config_results,
-            ranking_metric=ranking_metric,
+            ranking_metric=metric_key,
             lcb_tie_tolerance=request.lcb_tie_tolerance,
         )
         recommended_lcb = recommended_config.get("cv_ranking_metric_lcb")
@@ -195,6 +201,9 @@ class BacktestSweepRunner:
             reverse=True,
         )
 
+        # В response.ranking_metric и recommended.ranking_metric кладём ЛОГИЧЕСКОЕ
+        # имя из запроса (skill/pinball_mean/directional_acc), а не резолвенный
+        # metric_key — иначе Pydantic-валидация Literal RankingMetric упадёт.
         return BacktestSweepResponse(
             sweep_id=sweep_id,
             ticker=source,
@@ -202,12 +211,12 @@ class BacktestSweepRunner:
             interval=request.interval,
             model_name=str(model_info.get("name", "unknown")),
             history_length=history_len,
-            ranking_metric=ranking_metric,
+            ranking_metric=request.ranking_metric,
             configs=configs_response,
             recommended=RecommendedConfig(
                 train_window_size=recommended_config["train_window_size"],
                 reason=reason,
-                ranking_metric=ranking_metric,
+                ranking_metric=request.ranking_metric,
                 lcb=recommended_lcb,
                 lcb_margin=margin,
             ),

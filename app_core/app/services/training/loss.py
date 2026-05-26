@@ -58,12 +58,15 @@ def weighted_pinball_loss(
 
     err = actual - predicted_quantiles  # (B, H, Q [,C])
 
-    # Broadcast квантилей: q shape (Q,) → (1, 1, Q, [1])
-    while q.ndim < err.ndim:
-        q = q.unsqueeze(0)
-    # Теперь q: (1, 1, Q) или (1, 1, Q, 1)
-    # При необходимости добавить C-dim вручную чтобы соответствовать err
-    # (но q в Q-измерении, err также имеет Q, остальные совпадут через broadcasting)
+    # Broadcast квантилей: q shape (Q,) нужно превратить в (1, 1, Q [,1]),
+    # где Q расположено на оси 2 (Q-axis в predicted_quantiles).
+    # unsqueeze(0) в цикле добавляет оси только В НАЧАЛО — для univariate (ndim=3)
+    # это даёт правильное (1,1,Q), но для multivariate (ndim=4) получалось (1,1,1,Q),
+    # что ломает broadcast с err shape (B,H,Q,C). Явно строим shape через view.
+    q_target_shape = [1] * predicted_quantiles.ndim
+    q_target_shape[2] = q.shape[0]   # Q-axis = position 2 в (B, H, Q [,C])
+    q = q.view(q_target_shape)
+    # Теперь q гарантированно: (1, 1, Q) или (1, 1, Q, 1)
 
     loss_per_point = torch.maximum(q * err, (q - 1.0) * err)  # (B, H, Q [,C])
 

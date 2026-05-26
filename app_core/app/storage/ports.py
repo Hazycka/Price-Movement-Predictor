@@ -13,27 +13,40 @@ class ModelArtifact:
     """
     Дообученный артефакт поверх foundation-модели.
 
-    training_components — список компонентов которые применяются при загрузке:
-       ["lora"]         — только LoRA-адаптеры (низкоранговые матрицы)
-       ["head"]         — только новая output head (linear probing)
-       ["lora", "head"] — комбо: LoRA + новая head обучаются вместе
-       ["full_ft"]      — полное дообучение (не планируем, но архитектурно возможно)
+    Идентичность артефакта (UNIQUE-ключ в БД):
+        (symbol, source, interval, model_name, training_components, train_window_size, version)
 
-    train_window_size — контекст на котором обучен артефакт. Часть «идентичности»
-    артефакта: разные контексты дают разные внутренние представления, на (ticker,
-    interval) может быть несколько артефактов с разными train_window_size.
+    Поля:
+      symbol  — тикер инструмента (SBER, AAPL и т.д.).
+      source  — провайдер данных, на которых обучали (t_invest / yahoo / csv).
+                Часть UNIQUE-ключа, NOT NULL.
+      market  — биржевая секция / код (TQBR, SPBXM, NASDAQ и т.д.). Информативное
+                поле, в UNIQUE-ключе НЕ участвует.
+      interval — таймфрейм данных (1h, 1d).
+      model_name — имя foundation-модели (patchtst, chronos и т.д.).
 
-    artifact_path — путь к директории с файлами:
-       data/artifacts/{id}/
-          adapter_model.safetensors    (если "lora" в components)
-          head.pt                       (если "head" в components)
-          metadata.json                 (всегда — снимок params + базовая инфа)
+      training_components — список компонентов которые применяются при загрузке:
+         ["lora"]         — только LoRA-адаптеры (низкоранговые матрицы)
+         ["head"]         — только новая output head (linear probing)
+         ["lora", "head"] — комбо: LoRA + новая head обучаются вместе
+         ["full_ft"]      — полное дообучение (не планируем, но архитектурно возможно)
 
-    params — конфиг обучения (LR, epochs, lora_r/alpha, training_loss и т.д.).
-    metrics — val-метрики после обучения (val_pinball, val_skill, val_dir_acc).
+      train_window_size — контекст на котором обучен артефакт. Часть «идентичности»
+        артефакта: разные контексты дают разные внутренние представления, на (ticker,
+        interval) может быть несколько артефактов с разными train_window_size.
+
+      artifact_path — путь к директории с файлами:
+         data/artifacts/{id}/
+            adapter_model.safetensors    (если "lora" в components)
+            head.pt                       (если "head" в components)
+            metadata.json                 (всегда — снимок params + базовая инфа)
+
+      params  — конфиг обучения (LR, epochs, lora_r/alpha, training_loss и т.д.).
+      metrics — val-метрики после обучения (val_pinball, val_skill, val_dir_acc).
     """
     symbol: str
-    market: str | None
+    source: str                        # NOT NULL: провайдер (t_invest / yahoo / csv)
+    market: str | None                 # nullable: биржевая секция (TQBR, SPBXM, ...)
     interval: str
     model_name: str
     training_components: list[str]
@@ -61,9 +74,10 @@ class ModelRegistryPort(Protocol):
             symbol: str,
             interval: str,
             model_name: str,
-            market: str | None = None,
+            source: str | None = None,
     ) -> list[ModelArtifact]:
-        """Возвращает все артефакты со статусом 'ready' для данного инструмента."""
+        """Возвращает все артефакты со статусом 'ready' для данного инструмента.
+        source опционален — без него поиск идёт по всем провайдерам."""
         ...
 
     def list_all(self) -> list[ModelArtifact]:

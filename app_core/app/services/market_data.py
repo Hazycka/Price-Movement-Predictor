@@ -15,29 +15,13 @@ def _normalize_ohlc_columns(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return data
 
 
-def _parse_history_period(period: str) -> pd.DateOffset:
-    value = int(period[:-1])
-    unit = period[-1]
-
-    if unit == "d":
-        return pd.DateOffset(days=value)
-    if unit == "w":
-        return pd.DateOffset(weeks=value)
-    if unit == "m":
-        return pd.DateOffset(months=value)
-    if unit == "y":
-        return pd.DateOffset(years=value)
-
-    raise ValueError(f"Неподдерживаемый формат history_period: {period}")
-
-
-def _resolve_history_window(history_period: str, history_up_to: str | None) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
-    if not history_up_to:
-        return None, None
-
-    end = pd.to_datetime(history_up_to, errors="raise")
-    start = end - _parse_history_period(history_period)
-    return start, end
+# Делегируем парсинг общим хелперам, чтобы поддержать как относительные периоды
+# ('1y', '6mo'), так и абсолютные даты ('2021-05-22'). Раньше тут была дублирующая
+# реализация без поддержки абсолютных дат — рассогласовалась бы с остальным кодом.
+from .market_data.common import (
+    parse_history_period as _parse_history_period,
+    resolve_history_window as _resolve_history_window,
+)
 
 
 def load_ohlc_from_ticker(

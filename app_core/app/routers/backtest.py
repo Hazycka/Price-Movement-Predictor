@@ -166,9 +166,10 @@ def dashboard(
         sweep_ids:  str | None = Query(
             None,
             description=(
-                "Список sweep_id через запятую (например '20,21,22') для сравнения. "
-                "Если задан — остальные фильтры игнорируются, кривые рисуются по каждому sweep'у, "
-                "снизу появляется diff-таблица показывающая Δ метрики между ними."
+                "Список sweep_id через запятую: '2' для одного sweep'а, '20,21,22' для "
+                "сравнения нескольких. Если задан — остальные фильтры игнорируются, "
+                "каждый sweep рисуется отдельной кривой; для нескольких внизу появляется "
+                "diff-таблица с Δ метрики."
             )
         ),
 ) -> HTMLResponse:
@@ -176,7 +177,7 @@ def dashboard(
     HTML страница с кривой train_window_size → метрика и таблицей всех runs.
 
     Два режима:
-      A) sweep_ids='20,21' — сравниваем конкретные sweep'ы (base vs LoRA и т.п.)
+      A) sweep_ids='2' или '20,21' — конкретные sweep'ы
       B) Без sweep_ids — фильтрация по ticker/source/interval/model_name.
     """
     parsed_sweep_ids = None
@@ -186,7 +187,7 @@ def dashboard(
         except ValueError as ex:
             raise HTTPException(
                 status_code=400,
-                detail=f"sweep_ids должен быть списком целых через запятую (например '20,21,22'), а не '{sweep_ids}'",
+                detail=f"sweep_ids должен быть списком целых через запятую (например '2' или '20,21,22'), а не '{sweep_ids}'",
             ) from ex
     html = build_dashboard_html(
         ticker=ticker, source=source, interval=interval, model_name=model_name,

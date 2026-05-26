@@ -35,6 +35,7 @@ except ImportError:
     DataLoader = None
 
 from .dataset import WalkForwardDataset
+from .exceptions import TrainingCancelledException
 from .loss import weighted_pinball_loss
 from ..backtest.weights import compute_weights
 
@@ -44,6 +45,10 @@ logger = logging.getLogger(__name__)
 # Тип progress callback: получает dict с метриками текущего шага.
 # Caller использует для записи в JobStore + консольный лог.
 ProgressCallback = Callable[[dict], None]
+
+# Тип cancel check: функция без аргументов, True означает «job отменён».
+# Trainer проверяет между батчами и бросает TrainingCancelledException.
+CancelCheck = Callable[[], bool]
 
 
 def _fmt_elapsed(sec: float) -> str:
@@ -110,6 +115,7 @@ class HeadTrainer:
             candles: list[dict[str, float]],
             config: HeadTrainingConfig,
             progress_callback: ProgressCallback | None = None,
+            cancel_check: CancelCheck | None = None,
     ) -> HeadTrainingResult:
         """
         Обучает новую output head на candles, возвращает state_dict + метрики.
@@ -120,6 +126,10 @@ class HeadTrainer:
            "batch": int, "total_batches": int, "loss": float,
            "elapsed_s": float, "eta_s": float}
         Caller (TrainingService) транслирует это в JobStore + консольный лог.
+
+        cancel_check (если задан) — функция без аргументов, вызывается между батчами.
+        Если возвращает True — поднимаем TrainingCancelledException и обучение
+        останавливается. Caller ловит и помечает job как cancelled.
         """
         def _emit(payload: dict) -> None:
             if progress_callback is not None:
@@ -128,8 +138,24 @@ class HeadTrainer:
                 except Exception as ex:  # noqa - не валим training из-за progress-callback
                     logger.warning("[HeadTrainer] progress_callback failed: %s", ex)
 
-        # 1) Заморозим всю модель кроме head
-        head_module = self._locate_head_module()
+        def _check_cancel() -> None:
+            if cancel_check is not None and cancel_check():
+                raise TrainingCancelledException(stage="head")
+
+        # 1) Получаем head через абстракцию модели (PatchTSTFM = backbone.out_layer,
+        # Moirai = param_proj и т.д.). См. ForecastModel.get_adapter_modules.
+        adapter_modules = self.base_model.get_adapter_modules()
+        if "head" not in adapter_modules:
+            raise RuntimeError(
+                f"Модель {type(self.base_model).__name__} не предоставляет 'head' "
+                f"в get_adapter_modules(). Доступны: {list(adapter_modules)}."
+            )
+        head_module = adapter_modules["head"]
+        logger.info(
+            "[HeadTrainer] head module: %s (%d params)",
+            type(head_module).__name__,
+            sum(p.numel() for p in head_module.parameters()),
+        )
         self._freeze_all_except(head_module)
 
         # 2) Готовим datasets
@@ -202,6 +228,7 @@ class HeadTrainer:
             self.torch_model.train()
             epoch_train_losses = []
             for batch_idx, (past, future) in enumerate(loader_train):
+                _check_cancel()
                 past = past.to(self.device)
                 future = future.to(self.device)
 
@@ -287,31 +314,6 @@ class HeadTrainer:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _locate_head_module(self):
-        """
-        Находит output head у PatchTSTFMForPrediction. Точное имя зависит от внутренней
-        архитектуры модели — пробуем несколько типичных вариантов.
-
-        Если ни одно не подходит — поднимаем понятную ошибку.
-        """
-        candidates = [
-            "head",                # стандартное HF имя
-            "prediction_head",
-            "output_head",
-            "linear_head",
-        ]
-        for name in candidates:
-            module = getattr(self.torch_model, name, None)
-            if module is not None and hasattr(module, "parameters"):
-                logger.info("[HeadTrainer] Found head module: %s", name)
-                return module
-        # Не нашли — выводим структуру модели для диагностики
-        children = [name for name, _ in self.torch_model.named_children()]
-        raise RuntimeError(
-            f"Не удалось найти output head у модели. Топ-level модули: {children}. "
-            f"Возможно нужно обновить _locate_head_module() под актуальную структуру."
-        )
-
     def _freeze_all_except(self, head_module) -> None:
         """Замораживает все параметры модели кроме параметров head_module."""
         head_params = set(id(p) for p in head_module.parameters())
@@ -331,29 +333,59 @@ class HeadTrainer:
 
     def _forward_quantiles(self, past_values, horizon: int):
         """
-        Прогон past_values через модель, возврат квантильных прогнозов.
+        Прогон past_values через модель, возврат квантильных прогнозов в shape
+        совместимом с weighted_pinball_loss: (B, H, Q, C).
 
-        Структура output зависит от внутренней реализации PatchTSTFMForPrediction.
-        Типично: outputs.prediction_outputs имеет shape (B, H, num_quantiles, C)
-        или (B, H, num_quantiles) для univariate.
+        Внутреннее устройство PatchTSTFMForPrediction:
+          - модель возвращает PatchTSTFMPredictionOutput с двумя полями:
+              * prediction_outputs: (B, H, N)         — point forecast (mean по Q)
+              * quantile_outputs:   (B, Q, H, N)      — квантильные прогнозы
+          - prediction_length управляет длиной прогноза (если не передать —
+            возьмётся model.config.prediction_length, который может быть != horizon)
 
-        Если структура другая — нужно адаптировать под конкретную версию tsfm_public.
+        Для обучения head'ы нам нужен именно quantile_outputs:
+          1) shape (B, Q, H, N) → permute в (B, H, Q, N) — ожидаемый формат loss'а
+          2) horizon явно передаём в prediction_length, иначе получим неверную длину
+
+        past_values: (B, T, C) где C = OHLC (4 канала)
+        return:      (B, H, Q, C) тензор с requires_grad
         """
-        # past_values: (B, T, C)
-        outputs = self.torch_model(past_values=past_values)
-        # Пытаемся достать quantile predictions через типовые имена атрибутов
-        for attr in ("prediction_outputs", "quantile_predictions", "predictions", "logits"):
+        # quantile_levels обязательно передаём — модель имеет внутренний набор из ~99
+        # квантилей, который в forward фильтруется до запрошенных. Без этого получим
+        # 99-мерный Q вместо 5, и weighted_pinball_loss упадёт по broadcast'у.
+        outputs = self.torch_model(
+            past_values=past_values,
+            prediction_length=horizon,
+            quantile_levels=list(self.quantile_levels),
+        )
+
+        # Основной путь: PatchTSTFMPredictionOutput.quantile_outputs
+        quantile_preds = getattr(outputs, "quantile_outputs", None)
+        if quantile_preds is not None:
+            # (B, Q, H, N) → (B, H, Q, N), C совпадает с N для нашего univariate-по-каналам случая
+            return quantile_preds.permute(0, 2, 1, 3)
+
+        # Fallback: пробуем альтернативные имена (для совместимости с другими версиями)
+        for attr in ("quantile_predictions", "predictions", "logits"):
             preds = getattr(outputs, attr, None)
             if preds is not None:
+                logger.warning(
+                    "[HeadTrainer] quantile_outputs не найден, использую outputs.%s "
+                    "(shape=%s) — проверь совместимость с loss'ом",
+                    attr, tuple(preds.shape),
+                )
                 return preds
-        # Если результат — кортеж/dict, пробуем по индексу
-        if isinstance(outputs, (tuple, list)) and len(outputs) > 0:
-            return outputs[0]
+
+        # Совсем экзотика — dict/tuple
         if isinstance(outputs, dict):
-            for key in ("prediction_outputs", "quantile_predictions", "predictions"):
+            for key in ("quantile_outputs", "quantile_predictions", "predictions"):
                 if key in outputs:
                     return outputs[key]
+        if isinstance(outputs, (tuple, list)) and len(outputs) > 0:
+            return outputs[0]
+
         raise RuntimeError(
             f"Не удалось извлечь квантильные прогнозы из output модели. "
-            f"Тип output: {type(outputs).__name__}, атрибуты: {dir(outputs)}"
+            f"Тип output: {type(outputs).__name__}, доступные поля: "
+            f"{[a for a in dir(outputs) if not a.startswith('_')]}"
         )

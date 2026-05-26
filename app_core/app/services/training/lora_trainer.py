@@ -32,6 +32,7 @@ except ImportError:
     DataLoader = None
 
 from .dataset import WalkForwardDataset
+from .exceptions import TrainingCancelledException
 from .head_trainer import _fmt_elapsed  # переиспользуем форматирование
 from .loss import weighted_pinball_loss
 from ..backtest.weights import compute_weights
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 ProgressCallback = Callable[[dict], None]
+CancelCheck = Callable[[], bool]
 
 
 @dataclass
@@ -61,6 +63,8 @@ class LoraTrainingConfig:
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_target_modules: list[str] = None
+    # DEPRECATED: head всегда обучается отдельно в orchestrator'е (TrainingService).
+    # Поле оставлено для backward compat — игнорируется внутри trainer'а.
     train_head_too: bool = False
 
 
@@ -108,12 +112,14 @@ class LoraTrainer:
             candles: list[dict[str, float]],
             config: LoraTrainingConfig,
             progress_callback: ProgressCallback | None = None,
+            cancel_check: CancelCheck | None = None,
     ) -> LoraTrainingResult:
         """
         Обучает LoRA-адаптеры. progress_callback (если задан) получает per-batch
         и per-epoch updates — caller использует для записи в JobStore.
 
         Структура payload в progress_callback идентична HeadTrainer.
+        cancel_check — функция без аргументов, True означает «job отменён».
         """
         def _emit(payload: dict) -> None:
             if progress_callback is not None:
@@ -122,9 +128,20 @@ class LoraTrainer:
                 except Exception as ex:  # noqa
                     logger.warning("[LoraTrainer] progress_callback failed: %s", ex)
 
+        def _check_cancel() -> None:
+            if cancel_check is not None and cancel_check():
+                raise TrainingCancelledException(stage="lora")
+
         from peft import LoraConfig, get_peft_model, TaskType
 
-        target_modules = config.lora_target_modules or ["q_proj", "k_proj", "v_proj", "out_proj"]
+        # target_modules: приоритет — явный config; иначе — дефолт от модели
+        # (см. ForecastModel.get_lora_target_modules). Это даёт корректные
+        # имена для конкретной FM (PatchTSTFM/Moirai/etc.) без хардкода тут.
+        target_modules = (
+            list(config.lora_target_modules)
+            if config.lora_target_modules
+            else self.base_model.get_lora_target_modules()
+        )
 
         # 1) Создаём PEFT-конфиг и оборачиваем модель.
         # task_type='FEATURE_EXTRACTION' — generic, не language modeling.
@@ -138,12 +155,9 @@ class LoraTrainer:
         )
         peft_model = get_peft_model(self.torch_model, lora_cfg)
 
-        # 2) Опционально размораживаем head
-        if config.train_head_too:
-            head_module = self._locate_head_module(peft_model)
-            for p in head_module.parameters():
-                p.requires_grad = True
-            logger.info("[LoraTrainer] train_head_too=True — head разморожен")
+        # train_head_too УБРАН в Pass 2 — head всегда обучается отдельным
+        # артефактом (или переиспользуется из БД) ДО запуска LoRA-трейнера.
+        # См. TrainingService.train_lora orchestrator.
 
         # 3) Datasets
         ds_train = WalkForwardDataset(
@@ -216,11 +230,12 @@ class LoraTrainer:
             peft_model.train()
             epoch_train = []
             for batch_idx, (past, future) in enumerate(loader_train):
+                _check_cancel()
                 past = past.to(self.device)
                 future = future.to(self.device)
 
                 optimizer.zero_grad()
-                pred_q = self._forward_quantiles(peft_model, past)
+                pred_q = self._forward_quantiles(peft_model, past, horizon=config.horizon)
                 loss = weighted_pinball_loss(
                     pred_q, future, weights_tensor, self.quantile_levels,
                 )
@@ -264,7 +279,7 @@ class LoraTrainer:
                     for past, future in loader_val:
                         past = past.to(self.device)
                         future = future.to(self.device)
-                        pred_q = self._forward_quantiles(peft_model, past)
+                        pred_q = self._forward_quantiles(peft_model, past, horizon=config.horizon)
                         l = weighted_pinball_loss(
                             pred_q, future, weights_tensor, self.quantile_levels,
                         )
@@ -284,15 +299,11 @@ class LoraTrainer:
                 "elapsed_s": elapsed,
             })
 
-        # 7) Снимок head если обучали
-        head_state = None
-        if config.train_head_too:
-            head_module = self._locate_head_module(peft_model)
-            head_state = {k: v.detach().cpu() for k, v in head_module.state_dict().items()}
-
+        # head_state больше не снимается — head обучается отдельным артефактом
+        # ДО LoraTrainer (в TrainingService orchestrator'е).
         return LoraTrainingResult(
             peft_model=peft_model,
-            head_state_dict=head_state,
+            head_state_dict=None,
             final_train_loss=train_history[-1] if train_history else 0.0,
             final_val_loss=val_history[-1] if val_history else 0.0,
             epochs_completed=config.num_epochs,
@@ -306,50 +317,52 @@ class LoraTrainer:
     # Helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _locate_head_module(model):
-        # PEFT оборачивает модель — head доступна через model.base_model.model.head
-        # или прямой атрибут (зависит от версии PEFT)
-        candidates_paths = [
-            ("base_model", "model", "head"),
-            ("base_model", "head"),
-            ("head",),
-        ]
-        for path in candidates_paths:
-            obj = model
-            for attr in path:
-                obj = getattr(obj, attr, None)
-                if obj is None:
-                    break
-            if obj is not None and hasattr(obj, "parameters"):
-                return obj
-        # Дополнительный поиск через base_model
-        base = getattr(model, "base_model", None)
-        if base is not None:
-            for name in ("head", "prediction_head", "output_head"):
-                module = getattr(base, name, None)
-                if module is None and hasattr(base, "model"):
-                    module = getattr(base.model, name, None)
-                if module is not None:
-                    return module
-        raise RuntimeError(
-            "Не удалось найти head у PEFT-обёрнутой модели. "
-            "Возможно нужна корректировка путей под текущую версию peft."
+    # Note: _locate_head_module был удалён — теперь head всегда обучается отдельным
+    # артефактом и применяется ДО LoRA через ArtifactLoader. См. оркестратор
+    # TrainingService.train_lora.
+
+    def _forward_quantiles(self, peft_model, past_values, horizon: int):
+        """
+        Прогон past_values через PEFT-обёрнутую модель, возврат квантильных прогнозов
+        в формате (B, H, Q, C) — совместимом с weighted_pinball_loss.
+
+        Логика идентична HeadTrainer._forward_quantiles:
+          - prediction_length=horizon обязательно (иначе вернётся длина из конфига модели)
+          - используем quantile_outputs (а не prediction_outputs — это уже усреднённый
+            point forecast, для loss бесполезный)
+          - permute (B, Q, H, N) → (B, H, Q, N)
+        """
+        # quantile_levels обязательно передаём — см. HeadTrainer._forward_quantiles
+        # (модель имеет ~99 внутренних квантилей, без явного списка вернёт их все).
+        outputs = peft_model(
+            past_values=past_values,
+            prediction_length=horizon,
+            quantile_levels=list(self.quantile_levels),
         )
 
-    def _forward_quantiles(self, peft_model, past_values):
-        """Прогон через peft-обёрнутую модель, возврат квантильных прогнозов."""
-        outputs = peft_model(past_values=past_values)
-        for attr in ("prediction_outputs", "quantile_predictions", "predictions", "logits"):
+        # Основной путь
+        quantile_preds = getattr(outputs, "quantile_outputs", None)
+        if quantile_preds is not None:
+            return quantile_preds.permute(0, 2, 1, 3)
+
+        # Fallback
+        for attr in ("quantile_predictions", "predictions", "logits"):
             preds = getattr(outputs, attr, None)
             if preds is not None:
+                logger.warning(
+                    "[LoraTrainer] quantile_outputs не найден, использую outputs.%s "
+                    "(shape=%s)", attr, tuple(preds.shape),
+                )
                 return preds
-        if isinstance(outputs, (tuple, list)) and len(outputs) > 0:
-            return outputs[0]
+
         if isinstance(outputs, dict):
-            for key in ("prediction_outputs", "quantile_predictions", "predictions"):
+            for key in ("quantile_outputs", "quantile_predictions", "predictions"):
                 if key in outputs:
                     return outputs[key]
+        if isinstance(outputs, (tuple, list)) and len(outputs) > 0:
+            return outputs[0]
+
         raise RuntimeError(
-            f"Не извлечь квантильные прогнозы из output PEFT-модели. type={type(outputs).__name__}"
+            f"Не извлечь квантильные прогнозы из output PEFT-модели. "
+            f"type={type(outputs).__name__}, fields={[a for a in dir(outputs) if not a.startswith('_')]}"
         )

@@ -496,3 +496,32 @@ class PatchTSTForecastModel(ForecastModel):
             "last_input_window_info": self._last_input_window_info,
             "load_error": self._runtime.load_error,
         }
+
+    # ------------------------------------------------------------------
+    # Adapter points (см. ForecastModel.get_adapter_modules / get_lora_target_modules)
+    #
+    # Структура PatchTSTFMForPrediction:
+    #   PatchTSTFMForPrediction
+    #     └─ backbone: PatchTSTFMModel
+    #          ├─ in_layer:  ResidualBlock — patch embedding (input projection)
+    #          ├─ pos_embed
+    #          ├─ blocks:    ModuleList[TransformerBlock] (для LoRA attention)
+    #          ├─ out_layer: ResidualBlock — projection → квантильные выходы (head)
+    #          └─ norm_fn:   RevIN
+    # ------------------------------------------------------------------
+
+    def get_adapter_modules(self) -> dict:
+        """Возвращает {"head": backbone.out_layer, "input": backbone.in_layer}."""
+        self._runtime.ensure_loaded()
+        backbone = self._runtime.model.backbone
+        return {
+            "head":  backbone.out_layer,
+            "input": backbone.in_layer,
+        }
+
+    def get_lora_target_modules(self) -> list[str]:
+        """
+        Стандартные attention-проекции внутри TransformerBlock'ов PatchTSTFM.
+        PEFT находит их по имени во всех слоях.
+        """
+        return ["q_proj", "k_proj", "v_proj", "out_proj"]

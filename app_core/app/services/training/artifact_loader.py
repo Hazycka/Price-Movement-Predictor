@@ -4,23 +4,38 @@ ArtifactLoader — применяет training-артефакты поверх f
 Use case:
   artifact = uow.model_registry.get_by_id(artifact_id)
   model = ArtifactLoader().apply(base_model, artifact)
-  # base_model теперь имеет применённые LoRA / head / любые другие компоненты
+  # base_model теперь имеет применённые LoRA / head / input
 
 Дизайн:
   - Каждый component в artifact.training_components обрабатывается соответствующим
-    хендлером (`_apply_lora`, `_apply_head`).
+    хендлером (_apply_lora, _apply_head, _apply_input).
   - Хендлеры идемпотентны: ArtifactLoader НЕ кеширует — caller отвечает за кеш.
-  - Если component не поддерживается → ValueError с понятным сообщением.
+  - Если component не поддерживается → ValueError.
 
-Текущий статус:
-  Phase 0 — skeleton, конкретных хендлеров пока нет (заполнятся в Phase 1/2).
-  Если в artifact.training_components что-то указано — будет ValueError "пока не реализовано".
+ПОДГРУЗКА СВЯЗАННЫХ КОМПОНЕНТОВ:
+  LoRA-артефакт может ссылаться на head/input артефакты через поля
+  params.base_head_artifact_id / params.base_input_artifact_id (записываются
+  оркестратором при цепочечном обучении). При apply() LoRA-артефакта мы:
+    1. Загружаем head артефакт по base_head_artifact_id и применяем его
+    2. Загружаем input артефакт по base_input_artifact_id и применяем его
+    3. Применяем сам LoRA
+  Это нужно потому что LoRA-веса обучались поверх конкретной head/input —
+  без них поведение модели будет неконсистентным.
+
+Архитектурные хуки для других foundation-моделей (Moirai-2 и т.д.):
+  _locate_*_module() сейчас знают про PatchTSTFM (backbone.in_layer /
+  backbone.out_layer). При добавлении новой модели нужно:
+    a) Расширить логику locate под её структуру (или вынести в Model-specific
+       MixIn — см. ForecastModel.locate_adapter_modules() в TODO).
+    b) В artifact_loader._get_handler — если разные модели требуют разной
+       логики применения, добавить диспетчеризацию по artifact.model_name.
 """
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
+from ...storage import get_uow_factory
 from ...storage.ports import ModelArtifact
 
 logger = logging.getLogger(__name__)
@@ -31,14 +46,12 @@ class ArtifactLoader:
 
     def apply(self, base_model, artifact: ModelArtifact):
         """
-        Применяет все компоненты артефакта к base_model.
+        Применяет компоненты артефакта к base_model (in-place мутация состояния
+        weights). Возвращает «адаптированную» модель.
 
-        Возвращает «адаптированную» модель. Это может быть тот же объект (если
-        компонент мутирует in-place) или обёртка (PeftModel и т.п.).
-
-        ВАЖНО: при `artifact.train_window_size` !=  тому что использует caller,
-        записываем warning. Адаптер технически применится, но качество
-        предсказаний может пострадать.
+        Если артефакт является LoRA — сначала проверяет params.base_head_artifact_id
+        и params.base_input_artifact_id, и подгружает их (через рекурсивный apply)
+        ПЕРЕД применением LoRA. Это гарантирует консистентность с обучением.
         """
         if not artifact.training_components:
             logger.info(
@@ -54,6 +67,10 @@ class ArtifactLoader:
                 f"БД-запись существует но артефакт удалён."
             )
 
+        # Если LoRA — подгружаем связанные head/input ПЕРЕД ним
+        if "lora" in artifact.training_components:
+            self._apply_linked_components(base_model, artifact)
+
         model = base_model
         for component in artifact.training_components:
             handler = self._get_handler(component)
@@ -64,11 +81,60 @@ class ArtifactLoader:
             )
         return model
 
+    def _apply_linked_components(self, base_model, lora_artifact: ModelArtifact) -> None:
+        """
+        Для LoRA-артефакта подгружает связанные head/input артефакты (если в
+        params указаны base_head_artifact_id / base_input_artifact_id) и применяет
+        их к модели до того как накатим саму LoRA.
+        """
+        params = lora_artifact.params or {}
+        head_id = params.get("base_head_artifact_id")
+        input_id = params.get("base_input_artifact_id")
+
+        if head_id is None and input_id is None:
+            logger.info(
+                "[ArtifactLoader] LoRA-артефакт id=%s не имеет ссылок на head/input — "
+                "применяем только LoRA (это zero-shot базис под LoRA)",
+                lora_artifact.id,
+            )
+            return
+
+        with get_uow_factory()() as uow:
+            head_art = uow.model_registry.get_by_id(head_id) if head_id else None
+            input_art = uow.model_registry.get_by_id(input_id) if input_id else None
+
+        # Порядок: head → input → (затем сама LoRA в основном apply())
+        if head_art is not None:
+            logger.info(
+                "[ArtifactLoader] LoRA #%d → подгружаем связанный head артефакт #%d",
+                lora_artifact.id, head_art.id,
+            )
+            self._apply_head(base_model, Path(head_art.artifact_path), head_art.params or {})
+        elif head_id is not None:
+            logger.warning(
+                "[ArtifactLoader] LoRA #%d ссылается на head #%d, но он не найден в БД — "
+                "продолжаем без head (поведение может отличаться от обучения)",
+                lora_artifact.id, head_id,
+            )
+
+        if input_art is not None:
+            logger.info(
+                "[ArtifactLoader] LoRA #%d → подгружаем связанный input артефакт #%d",
+                lora_artifact.id, input_art.id,
+            )
+            self._apply_input(base_model, Path(input_art.artifact_path), input_art.params or {})
+        elif input_id is not None:
+            logger.warning(
+                "[ArtifactLoader] LoRA #%d ссылается на input #%d, но он не найден в БД",
+                lora_artifact.id, input_id,
+            )
+
     def _get_handler(self, component: str):
         """Возвращает функцию-хендлер для component'а."""
         handlers = {
-            "lora": self._apply_lora,
-            "head": self._apply_head,
+            "lora":    self._apply_lora,
+            "head":    self._apply_head,
+            "input":   self._apply_input,
             "full_ft": self._apply_full_ft,
         }
         if component not in handlers:
@@ -79,16 +145,13 @@ class ArtifactLoader:
         return handlers[component]
 
     # ------------------------------------------------------------------
-    # Обработчики компонентов (заполняются по фазам)
+    # Обработчики компонентов
     # ------------------------------------------------------------------
 
     def _apply_lora(self, model, artifact_dir: Path, params: dict):
         """
         Применяет LoRA-адаптер из artifact_dir/adapter/ через PEFT.
-
-        Возвращает PEFT-обёрнутую модель. Нашему wrapper'у (PatchTSTForecastModel)
-        нужно подменить внутренний torch.model на эту обёртку, чтобы последующие
-        forward-вызовы шли через адаптер.
+        Возвращает модель с подменённой _runtime.model на peft-обёртку.
         """
         try:
             from peft import PeftModel
@@ -106,20 +169,12 @@ class ArtifactLoader:
 
         torch_model = self._unwrap_to_torch(model)
         peft_model = PeftModel.from_pretrained(torch_model, adapter_dir.as_posix())
-        # Подменяем _runtime.model на peft-обёртку. PatchTSTRuntime.pipeline ссылается
-        # на self.model — нам нужно ОБНОВИТЬ pipeline тоже чтобы он использовал
-        # peft_model. Делаем это аккуратно — пересоздаём pipeline.
         model._runtime.model = peft_model
+
         # Pipeline хранит ссылку на старую модель — пересоздаём:
         try:
-            from tsfm_public import TimeSeriesForecastingPipeline
-            from .patchtst_runtime import QUANTILE_LEVELS  # noqa: re-importable
-        except ImportError:
-            pass
-        # Re-creating pipeline через runtime API
-        rt = model._runtime
-        try:
             from tsfm_public import TimeSeriesForecastingPipeline as TSPipeline
+            rt = model._runtime
             rt.pipeline = TSPipeline(
                 model=peft_model,
                 device=rt.device,
@@ -138,24 +193,15 @@ class ArtifactLoader:
 
     def _apply_head(self, model, artifact_dir: Path, params: dict):
         """
-        Применяет сохранённую новую output head поверх foundation-модели.
+        Загружает head state_dict в адаптерный модуль (для PatchTSTFM —
+        backbone.out_layer, для Moirai — param_proj и т.п.).
 
-        model — это наш wrapper (PatchTSTForecastModel или аналог), а не raw torch-модуль.
-        Поэтому нужно подменять head во внутреннем torch_model.
+        Поиск модуля делегирован самой модели через `model.get_adapter_modules()`.
+        Это убирает зависимость loader'а от конкретной структуры FM.
 
-        ВНИМАНИЕ: head_state_dict ЗАГРУЖАЕТСЯ В МЕСТЕ ИСХОДНОЙ HEAD. Это значит что
-        base model МУТИРУЕТСЯ — после inference остальные запросы (без артефакта)
-        получат адаптированную модель. Caller отвечает за изоляцию (создать свежую
-        модель на каждый запрос, либо хранить snapshot и восстанавливать).
-
-        Для нашего workflow (worker процессы создают свои model singletons): пока
-        worker обрабатывает только один artifact_id за раз — нормально. Когда смешаем
-        разные artifact_id в одном воркере — нужно будет добавить snapshot/restore.
+        ВНИМАНИЕ: мутирует base_model in-place.
         """
-        try:
-            import torch
-        except ImportError:
-            raise RuntimeError("PyTorch не установлен.")
+        import torch
 
         head_path = artifact_dir / "head.pt"
         if not head_path.exists():
@@ -163,11 +209,15 @@ class ArtifactLoader:
                 f"Файл head.pt не найден в {artifact_dir} — артефакт повреждён."
             )
 
-        # Находим head в torch модели (логика та же что в HeadTrainer)
-        torch_model = self._unwrap_to_torch(model)
-        head_module = self._locate_head_module(torch_model)
-
-        state_dict = torch.load(head_path, map_location=model._runtime.device)
+        adapter_modules = model.get_adapter_modules()
+        if "head" not in adapter_modules:
+            raise RuntimeError(
+                f"Модель {type(model).__name__} не предоставляет 'head' "
+                f"в get_adapter_modules() — head артефакт неприменим. "
+                f"Доступны: {list(adapter_modules)}."
+            )
+        head_module = adapter_modules["head"]
+        state_dict = torch.load(head_path, map_location=model._runtime.device, weights_only=True)
         head_module.load_state_dict(state_dict)
         logger.info(
             "[ArtifactLoader] Head загружен из %s в module=%s",
@@ -175,40 +225,52 @@ class ArtifactLoader:
         )
         return model
 
+    def _apply_input(self, model, artifact_dir: Path, params: dict):
+        """Симметрично _apply_head — для input projection."""
+        import torch
+
+        input_path = artifact_dir / "input.pt"
+        if not input_path.exists():
+            raise FileNotFoundError(
+                f"Файл input.pt не найден в {artifact_dir} — артефакт повреждён."
+            )
+
+        adapter_modules = model.get_adapter_modules()
+        if "input" not in adapter_modules:
+            raise RuntimeError(
+                f"Модель {type(model).__name__} не предоставляет 'input' "
+                f"в get_adapter_modules() — input артефакт неприменим. "
+                f"Доступны: {list(adapter_modules)}."
+            )
+        input_module = adapter_modules["input"]
+        state_dict = torch.load(input_path, map_location=model._runtime.device, weights_only=True)
+        input_module.load_state_dict(state_dict)
+        logger.info(
+            "[ArtifactLoader] Input загружен из %s в module=%s",
+            input_path, type(input_module).__name__,
+        )
+        return model
+
     def _apply_full_ft(self, model, artifact_dir: Path, params: dict):
-        """Полное дообучение — заменяет state_dict модели целиком. Не планируем сейчас."""
         raise NotImplementedError(
             "Full fine-tuning component не реализован и не планируется в краткой перспективе."
         )
 
     # ------------------------------------------------------------------
-    # Shared helpers
+    # Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
     def _unwrap_to_torch(model):
         """
-        Достаёт raw torch-модель из нашего wrapper'а PatchTSTForecastModel.
-        Если model уже torch-модуль — возвращает как есть.
+        Достаёт raw torch-модель из wrapper'а (PatchTSTForecastModel /
+        MoiraiForecastModel и т.д.). Используется в _apply_lora где
+        PEFT-обёртке нужен raw torch-объект, а не наш wrapper.
         """
-        # Наш wrapper держит модель в _runtime.model
         rt = getattr(model, "_runtime", None)
         if rt is not None and rt.model is not None:
             return rt.model
-        # Если это PeftModel — base_model.model
         base = getattr(model, "base_model", None)
         if base is not None:
             return base
         return model
-
-    @staticmethod
-    def _locate_head_module(torch_model):
-        """Дублирует логику HeadTrainer._locate_head_module."""
-        for name in ("head", "prediction_head", "output_head", "linear_head"):
-            module = getattr(torch_model, name, None)
-            if module is not None and hasattr(module, "parameters"):
-                return module
-        children = [n for n, _ in torch_model.named_children()]
-        raise RuntimeError(
-            f"Не удалось найти head у модели. Топ-level модули: {children}."
-        )

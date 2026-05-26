@@ -159,6 +159,58 @@ class ForecastModel(ABC):
         return None
 
     # ------------------------------------------------------------------
+    # Точки расширения для дообучения и применения артефактов
+    #
+    # Каждая foundation-модель знает свою внутреннюю структуру лучше, чем
+    # universal-trainer'ы. Эти методы — единственное место, где «привязка»
+    # к конкретной архитектуре. Trainers и ArtifactLoader используют их
+    # вместо собственного _locate_*_module.
+    #
+    # Дефолт — NotImplementedError. Модели, поддерживающие дообучение,
+    # переопределяют. Модели чисто zero-shot (например, для quick prototyping)
+    # могут не реализовывать — тогда соответствующие endpoint'ы /training/*
+    # выдадут понятную ошибку.
+    # ------------------------------------------------------------------
+
+    def get_adapter_modules(self) -> dict:
+        """
+        Возвращает словарь {"head": nn.Module, "input": nn.Module, ...} —
+        модули, которые можно тренировать как отдельные адаптеры
+        (head training / input projection tuning).
+
+        Имена ключей:
+          'head'  — выходная проекция (для PatchTSTFM = backbone.out_layer,
+                    для Moirai = param_proj и т.п.)
+          'input' — входная проекция / patch embedding
+                    (PatchTSTFM = backbone.in_layer, Moirai = in_proj)
+          Любые дополнительные имена — модель-специфичные.
+
+        Гарантия: возвращаемые модули — реальные nn.Module внутри загруженной
+        модели (не копии), их state_dict загружается/сохраняется напрямую.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} не поддерживает adapter training "
+            f"(head/input fine-tuning). Переопредели get_adapter_modules() "
+            f"чтобы включить эту функциональность."
+        )
+
+    def get_lora_target_modules(self) -> list[str]:
+        """
+        Возвращает список имён модулей, в которые PEFT инжектит LoRA-матрицы.
+
+        Стандартный набор для transformer-based моделей: q_proj/k_proj/v_proj/out_proj.
+        Для модели с нестандартным naming (например, MoE с expert routing)
+        список будет другим.
+
+        Используется как default для LoraTrainingConfig.lora_target_modules;
+        пользователь может переопределить в запросе если хочет точечно настроить.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} не задаёт LoRA target modules. "
+            f"Переопредели get_lora_target_modules() чтобы включить LoRA training."
+        )
+
+    # ------------------------------------------------------------------
     # Опциональные батчевые методы (для ускорения walk-forward бэктеста)
     #
     # Дефолтная реализация — sequential loop через одноразовые методы.

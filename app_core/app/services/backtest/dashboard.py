@@ -85,6 +85,32 @@ def _ranking_metric_for_target(target: str) -> str:
     return "skill_mae_close" if target == "ohlc" else "skill_mae"
 
 
+def _sweep_legend_label(sweep_id: int | None, runs: list[BacktestRunRecord]) -> str:
+    """
+    Строит подпись для одной линии sweep'а с ключевыми параметрами запуска.
+    Параметры берём из первого run'а — внутри одного sweep они одинаковые
+    (кроме train_window_size, который как раз варьируется).
+
+    Пример: "sweep #2 (h=40, hist=5y, target=ohlc, w=exp:20)"
+    """
+    if sweep_id is None:
+        prefix = "standalone"
+    else:
+        prefix = f"sweep #{sweep_id}"
+
+    if not runs:
+        return prefix
+
+    r = runs[0]
+    parts = [
+        f"h={r.horizon}",
+        f"hist={r.history_period}",
+        f"target={r.backtest_target}",
+        f"w={r.evaluation_weights}:{int(r.weight_first_to_last_ratio)}",
+    ]
+    return f"{prefix} ({', '.join(parts)})"
+
+
 def _build_curve(records: list[BacktestRunRecord]) -> tuple[list[dict], dict]:
     """
     Кривая: ось X = train_window_size, Y = ranking_metric (mean) с error bars (CI).
@@ -113,7 +139,7 @@ def _build_curve(records: list[BacktestRunRecord]) -> tuple[list[dict], dict]:
         err_minus = [y - lo for y, lo in zip(ys, ci_low)]
         err_plus = [hi - y for y, hi in zip(ys, ci_high)]
 
-        label = f"sweep {sweep_id}" if sweep_id is not None else "standalone"
+        label = _sweep_legend_label(sweep_id, runs_sorted)
         traces.append({
             "type":  "scatter",
             "mode":  "lines+markers",
@@ -157,10 +183,8 @@ def _build_table(records: list[BacktestRunRecord], recommended_sweep_ids: set[in
         kind = "CV" if r.cv_fold_index is not None else "primary"
         sweep_cell = f"#{r.sweep_id}" if r.sweep_id is not None else "—"
         cv_cell = f"fold {r.cv_fold_index}" if r.cv_fold_index is not None else "—"
-        metric_val = r.metrics.get(metric_name, 0.0)
-        metric_lcb = r.metrics_lcb.get(metric_name, 0.0)
-        dir_acc = r.metrics.get("directional_acc", 0.0)
-        cov = r.metrics.get("coverage_q10_q90", 0.0)
+        m = r.metrics or {}
+        lcb = r.metrics_lcb or {}
         rows_html.append(
             f"<tr>"
             f"<td class='left'>{r.id}</td>"
@@ -171,10 +195,15 @@ def _build_table(records: list[BacktestRunRecord], recommended_sweep_ids: set[in
             f"<td class='left'>{kind}</td>"
             f"<td class='left'>{sweep_cell}</td>"
             f"<td class='left'>{cv_cell}</td>"
-            f"<td>{_format_value(metric_val)}</td>"
-            f"<td>{_format_value(metric_lcb)}</td>"
-            f"<td>{_format_value(dir_acc)}</td>"
-            f"<td>{_format_value(cov)}</td>"
+            f"<td>{_format_value(m.get(metric_name))}</td>"
+            f"<td>{_format_value(lcb.get(metric_name))}</td>"
+            f"<td>{_format_value(m.get('pinball_mean'))}</td>"
+            f"<td>{_format_value(m.get('pinball_q50'))}</td>"
+            f"<td>{_format_value(m.get('directional_acc'))}</td>"
+            f"<td>{_format_value(m.get('coverage_q10_q90'))}</td>"
+            f"<td>{_format_value(m.get('coverage_q25_q75'))}</td>"
+            f"<td>{_format_value(m.get('winkler_q10_q90'))}</td>"
+            f"<td>{_format_value(m.get('winkler_q25_q75'))}</td>"
             f"</tr>"
         )
 
@@ -191,8 +220,13 @@ def _build_table(records: list[BacktestRunRecord], recommended_sweep_ids: set[in
   <th class="left">cv</th>
   <th>{metric_name}</th>
   <th>{metric_name}_lcb</th>
+  <th>pinball_mean</th>
+  <th>pinball_q50</th>
   <th>dir_acc</th>
   <th>cov_q10_q90</th>
+  <th>cov_q25_q75</th>
+  <th>winkler_q10_q90</th>
+  <th>winkler_q25_q75</th>
 </tr></thead>
 <tbody>{''.join(rows_html)}</tbody>
 </table>
@@ -230,8 +264,13 @@ def build_dashboard_html(
             )
 
     if sweep_ids:
+        ids_str = ', '.join(f"#{s}" for s in sweep_ids)
         title = f"sweeps {','.join(str(s) for s in sweep_ids)}"
-        meta = f"Сравнение sweep'ов: {', '.join(str(s) for s in sweep_ids)} · runs: {len(records)}"
+        meta = (
+            f"Один sweep: {ids_str} · runs: {len(records)}"
+            if len(sweep_ids) == 1
+            else f"Сравнение sweep'ов: {ids_str} · runs: {len(records)}"
+        )
     else:
         title_parts = [p for p in (ticker, interval, model_name) if p]
         title = " · ".join(title_parts) if title_parts else "all runs"

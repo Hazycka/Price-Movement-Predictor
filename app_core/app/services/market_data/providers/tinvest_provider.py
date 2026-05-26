@@ -227,7 +227,13 @@ class TInvestMarketDataProvider(MarketDataProvider):
         if not isinstance(options, TInvestProviderOptions):
             raise TypeError(f"Ожидались настройки T-Invest, но получено {type(options).__name__}")
         end_dt = resolve_end_dt(request.history_up_to)
-        start_dt = (pd.Timestamp(end_dt) - parse_history_period(request.history_period)).to_pydatetime()
+        # history_period может быть как относительным ('1y'), так и абсолютной датой
+        # ('2021-05-22'). resolve_history_window инкапсулирует обе ветки.
+        from ..common import is_absolute_date
+        if is_absolute_date(request.history_period):
+            start_dt = pd.to_datetime(request.history_period, utc=True).to_pydatetime()
+        else:
+            start_dt = (pd.Timestamp(end_dt) - parse_history_period(request.history_period)).to_pydatetime()
         if start_dt.tzinfo is None:
             start_dt = start_dt.replace(tzinfo=timezone.utc)
         return self._load_range(options, request.interval, start_dt, end_dt)

@@ -3,7 +3,14 @@
 
 class ChartService:
     @staticmethod
-    def build(result) -> str:
+    def build(result, max_chart_history_candles: int | None = 300) -> str:
+        """
+        Строит HTML с графиком прогноза.
+
+        max_chart_history_candles — визуальное ограничение на число исторических
+        свечей. None — рисовать всю историю. На инференс не влияет, это только
+        для читаемости графика.
+        """
         title = f"{result.source} | model={result.model['name']}"
 
         # Конвертируем pydantic schema в plain dict для рендерера
@@ -40,5 +47,5 @@ class ChartService:
             chart_type_forecast=result.chart_type_forecast,
             interval=result.interval,
             model_input_start_date=result.model_input_start_date_used,
-            max_history_candles=300
+            max_history_candles=max_chart_history_candles,
         )
