@@ -76,3 +76,27 @@ class PatchTSTRuntime:
             raise RuntimeError(
                 f"Не удалось загрузить PatchTST FM модель '{self.model_id}': {ex}"
             ) from ex
+
+    # ------------------------------------------------------------------
+    # Hook для пересборки inference-стека после применения LoRA
+    # ------------------------------------------------------------------
+
+    def rebuild_after_lora(self, peft_model) -> None:
+        """
+        Пересобирает TSFM pipeline после того как ArtifactLoader обернул model
+        в PEFT. Без этого pipeline продолжал бы держать ссылку на base-модель
+        и LoRA-адаптер молча игнорировался бы на инференсе.
+
+        Контракт (см. ArtifactLoader._apply_lora): любой runtime, к которому
+        применяется LoRA, ОБЯЗАН реализовать этот метод. Ошибки НЕ глушатся —
+        если pipeline не пересобрался, должно упасть, а не отдавать base-прогнозы.
+        """
+        from tsfm_public import TimeSeriesForecastingPipeline
+
+        self.model = peft_model
+        self.pipeline = TimeSeriesForecastingPipeline(
+            model=peft_model,
+            device=self.device,
+            explode_forecasts=True,
+            quantile_levels=self.quantile_levels,
+        )

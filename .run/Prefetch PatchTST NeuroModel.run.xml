@@ -1,0 +1,17 @@
+﻿<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Prefetch PatchTST NeuroModel" type="ShConfigurationType">
+    <option name="SCRIPT_TEXT" value="$env:HF_HOME=&quot;S:\Job\Price Movement Predictor\app_core\.hf_cache&quot;; &amp; &quot;S:\Job\Price Movement Predictor\app_core\.venv\Scripts\python.exe&quot; -c &quot;from huggingface_hub import snapshot_download; snapshot_download(repo_id='ibm-research/patchtst-fm-r1')&quot;" />
+    <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+    <option name="SCRIPT_PATH" value="" />
+    <option name="SCRIPT_OPTIONS" value="" />
+    <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="false" />
+    <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$/app_core" />
+    <option name="INDEPENDENT_INTERPRETER_PATH" value="true" />
+    <option name="INTERPRETER_PATH" value="powershell.exe" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="EXECUTE_IN_TERMINAL" value="true" />
+    <option name="EXECUTE_SCRIPT_FILE" value="false" />
+    <envs />
+    <method v="2" />
+  </configuration>
+</component>

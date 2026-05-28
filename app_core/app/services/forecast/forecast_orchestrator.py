@@ -106,16 +106,43 @@ class ForecastOrchestrator:
             start_date_used=start_date_used
         )
 
+        # ------------------------------------------------------------------
+        # Visual-trim истории для ответа.
+        #
+        # max_chart_history_candles управляет ТОЛЬКО тем, сколько исторических
+        # свечей возвращается клиенту (в JSON-ответе и в HTML-графике).
+        # Модель к этому моменту уже отработала на ПОЛНОЙ истории — обрезка
+        # здесь на инференс никак не влияет. В metadata остаётся исходная
+        # длина (history_length, model_input_history_length_used) — это для
+        # аудита того, что реально получила модель.
+        #
+        # Замечание про индексы: model_input_start_index_used считался от
+        # полной истории; после обрезки он становится неточным. Корректным
+        # ориентиром после trim'а остаётся model_input_start_date_used (дата).
+        # ------------------------------------------------------------------
+        max_n = getattr(request, "max_chart_history_candles", None)
+        if max_n is not None and len(candles) > max_n:
+            candles_out = candles[-max_n:]
+            dates_out = dates[-max_n:] if dates else dates
+            indicators_out = {
+                name: (values[-max_n:] if values else values)
+                for name, values in indicators.items()
+            }
+        else:
+            candles_out = candles
+            dates_out = dates
+            indicators_out = indicators
+
         return ForecastResponse(
             source=source,
             model=model_info,
             chart_type_history=request.chart_type_history,
             chart_type_forecast=request.chart_type_forecast,
-            candles=candles,
+            candles=candles_out,
             forecast_candles=forecast_candles,
             forecast_ohlc_quantiles=forecast_ohlc_quantiles,
-            indicators=indicators,
-            dates=dates,
+            indicators=indicators_out,
+            dates=dates_out,
             interval=request.interval,
             model_input_start_date_used=start_date_used,
             metadata=metadata,

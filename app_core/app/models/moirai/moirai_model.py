@@ -240,10 +240,18 @@ class MoiraiForecastModel(ForecastModel):
         past_observed_target = torch.ones_like(past_target, dtype=torch.bool)
         past_is_pad = torch.zeros((n_series, ctx_len), dtype=torch.bool, device=self._runtime.device)
 
-        # Если у нас другой horizon чем у forecaster — пересоздадим (быстрее
-        # чем grow forecaster для каждого вызова, но мы храним один на runtime).
-        if horizon != self._runtime.prediction_length:
-            self._rebuild_forecaster(horizon=horizon)
+        # Moirai2Forecast фиксирует context_length и prediction_length на момент
+        # инициализации wrapper'а (см. inspect.signature Moirai2Forecast.__init__:
+        # context_length — обязательный аргумент). Если фактический вход или
+        # горизонт не совпадают с тем, на что собран текущий forecaster — патчевый
+        # размер ввода не сойдётся и мы получим ошибку shape mismatch
+        # ("tensor a (X) must match tensor b (Y)"). Поэтому пересобираем wrapper
+        # под фактическую пару (ctx_len, horizon). Веса MoiraiModule не
+        # перезагружаются — пересоздаётся только тонкий wrapper над module,
+        # это копеечная операция.
+        if (ctx_len != self._runtime.context_length
+                or horizon != self._runtime.prediction_length):
+            self._rebuild_forecaster(context_length=ctx_len, prediction_length=horizon)
 
         with torch.no_grad():
             samples = self._runtime.forecaster(
@@ -276,32 +284,56 @@ class MoiraiForecastModel(ForecastModel):
             q90=as_lists[4],
         )
 
-    def _rebuild_forecaster(self, horizon: int) -> None:
+    def _rebuild_forecaster(self, *, context_length: int, prediction_length: int) -> None:
         """
-        Если запрошен другой prediction_length — пересобираем forecaster wrapper.
-        Сам MoiraiModule (главный вес) не меняется, только wrapper'овые параметры.
+        Пересобирает Moirai2Forecast wrapper под фактические (context_length,
+        prediction_length). Веса MoiraiModule сохраняются — это runtime.module,
+        пересоздаётся только тонкий wrapper.
         """
-        from uni2ts.model.moirai import MoiraiForecast
+        from uni2ts.model.moirai2 import Moirai2Forecast
 
-        self._runtime.prediction_length = horizon
-        self._runtime.forecaster = MoiraiForecast(
-            module=self._runtime.module,
-            prediction_length=horizon,
-            context_length=self._runtime.context_length,
-            patch_size=self._runtime.patch_size,
-            num_samples=self._runtime.num_samples,
+        self._runtime.context_length = context_length
+        self._runtime.prediction_length = prediction_length
+        self._runtime.forecaster = Moirai2Forecast(
+            prediction_length=prediction_length,
             target_dim=1,
             feat_dynamic_real_dim=0,
             past_feat_dynamic_real_dim=0,
+            context_length=context_length,
+            module=self._runtime.module,
         ).to(self._runtime.device)
         self._runtime.forecaster.eval()
 
     def _record_input_info(self, context_len: int, horizon: int, channels: int) -> None:
-        """Метаинфа последнего вызова — для get_info()."""
+        """
+        Метаинфа последнего вызова — попадает в model.get_info()["last_input_window_info"]
+        и оттуда читается ForecastMetadataBuilder'ом.
+
+        Поля совместимы с PatchTST для единого формата metadata в ForecastResponse:
+          original_length / used_length / trimmed / start_index_used — те же
+          ключи, что заполняет PatchTSTModel._update_last_input_window_info.
+
+        Moirai НЕ обрезает историю (forecaster пересобирается под её длину
+        в _forecast_samples_batch), поэтому:
+          original_length == used_length, trimmed=False, start_index_used=0.
+        required_context_length=None — у Moirai нет жёсткого нижнего требования
+        к контексту, он адаптируется.
+
+        Дополнительные Moirai-specific поля (channels, num_samples,
+        model_context_length, model_prediction_length) добавлены сверх общего
+        контракта — для дебага через GET /info.
+        """
         self._last_input_window_info = {
-            "requested_horizon": horizon,
-            "context_length_provided": context_len,
-            "channels": channels,
-            "model_context_length": self._runtime.context_length,
-            "model_prediction_length": self._runtime.prediction_length,
+            # --- Общий контракт с PatchTST (читается metadata_builder'ом) ---
+            "original_length":          context_len,
+            "used_length":              context_len,
+            "trimmed":                  False,
+            "start_index_used":         0,
+            "required_context_length":  None,
+            "requested_horizon":        horizon,
+            # --- Moirai-specific (для GET /info, не для metadata_builder) ---
+            "channels":                 channels,
+            "num_samples":              self._runtime.num_samples,
+            "model_context_length":     self._runtime.context_length,
+            "model_prediction_length":  self._runtime.prediction_length,
         }

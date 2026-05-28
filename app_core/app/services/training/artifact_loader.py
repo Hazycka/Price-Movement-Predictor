@@ -22,13 +22,18 @@ Use case:
   Это нужно потому что LoRA-веса обучались поверх конкретной head/input —
   без них поведение модели будет неконсистентным.
 
-Архитектурные хуки для других foundation-моделей (Moirai-2 и т.д.):
-  _locate_*_module() сейчас знают про PatchTSTFM (backbone.in_layer /
-  backbone.out_layer). При добавлении новой модели нужно:
-    a) Расширить логику locate под её структуру (или вынести в Model-specific
-       MixIn — см. ForecastModel.locate_adapter_modules() в TODO).
-    b) В artifact_loader._get_handler — если разные модели требуют разной
-       логики применения, добавить диспетчеризацию по artifact.model_name.
+КОНТРАКТ ПЕРЕСБОРКИ ПОСЛЕ LoRA:
+  Inference у каждой FM идёт через свой wrapper (PatchTST — TSFM pipeline,
+  Moirai2 — Moirai2Forecast). После оборачивания модели в PEFT этот wrapper
+  ОБЯЗАН быть пересобран на peft-модели, иначе адаптер не участвует в инференсе.
+  Поэтому каждый runtime, поддерживающий LoRA, реализует rebuild_after_lora().
+  Loader НЕ знает про конкретные wrapper'ы и НЕ делает fallback — отсутствие
+  метода или ошибка пересборки приводят к явному исключению.
+
+Архитектурные хуки для других foundation-моделей:
+  get_adapter_modules() (на самой модели) — единственная точка привязки head/input
+  к структуре конкретной FM. rebuild_after_lora() (на runtime) — единственная
+  точка привязки LoRA-инференса. Loader остаётся model-agnostic.
 """
 from __future__ import annotations
 
@@ -150,8 +155,13 @@ class ArtifactLoader:
 
     def _apply_lora(self, model, artifact_dir: Path, params: dict):
         """
-        Применяет LoRA-адаптер из artifact_dir/adapter/ через PEFT.
-        Возвращает модель с подменённой _runtime.model на peft-обёртку.
+        Применяет LoRA-адаптер из artifact_dir/adapter/ через PEFT и пересобирает
+        inference-стек runtime'а на peft-модели.
+
+        FAIL-FAST: пересборка делегируется runtime.rebuild_after_lora(). Если
+        метода нет — это ошибка конфигурации (адаптер не участвовал бы в инференсе).
+        Ошибки пересборки НЕ глушатся: лучше явно упасть, чем тихо отдавать
+        прогнозы base-модели без LoRA.
         """
         try:
             from peft import PeftModel
@@ -167,28 +177,28 @@ class ArtifactLoader:
                 f"Директория LoRA-адаптера не найдена: {adapter_dir} — артефакт повреждён."
             )
 
+        rt = model._runtime
         torch_model = self._unwrap_to_torch(model)
         peft_model = PeftModel.from_pretrained(torch_model, adapter_dir.as_posix())
-        model._runtime.model = peft_model
+        rt.model = peft_model
 
-        # Pipeline хранит ссылку на старую модель — пересоздаём:
-        try:
-            from tsfm_public import TimeSeriesForecastingPipeline as TSPipeline
-            rt = model._runtime
-            rt.pipeline = TSPipeline(
-                model=peft_model,
-                device=rt.device,
-                explode_forecasts=True,
-                quantile_levels=rt.quantile_levels,
-            )
-            logger.info("[ArtifactLoader] LoRA адаптер загружен и pipeline пересоздан.")
-        except Exception as ex:
-            logger.warning(
-                "[ArtifactLoader] Не удалось пересоздать TSFM pipeline после применения LoRA: %s. "
-                "Inference может использовать base-модель без адаптера.",
-                ex,
+        # Контракт: runtime ОБЯЗАН уметь пересобрать свой inference-стек на
+        # peft-модели. Без этого LoRA молча не применилась бы к инференсу.
+        rebuild = getattr(rt, "rebuild_after_lora", None)
+        if not callable(rebuild):
+            raise RuntimeError(
+                f"Runtime {type(rt).__name__} не реализует rebuild_after_lora(), "
+                f"но к модели применяется LoRA-артефакт. Без пересборки inference-стека "
+                f"адаптер был бы проигнорирован. Реализуй rebuild_after_lora(peft_model) "
+                f"в этом runtime (см. PatchTSTRuntime / MoiraiRuntime)."
             )
 
+        # Намеренно БЕЗ try/except: ошибка пересборки должна всплыть как есть.
+        rebuild(peft_model)
+        logger.info(
+            "[ArtifactLoader] LoRA применена, %s.rebuild_after_lora() выполнен.",
+            type(rt).__name__,
+        )
         return model
 
     def _apply_head(self, model, artifact_dir: Path, params: dict):

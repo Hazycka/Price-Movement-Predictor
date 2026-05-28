@@ -1,0 +1,59 @@
+# =============================================================================
+# Moirai-2 — ПОЛНОЕ окружение под весь app_core (.venv-moirai)
+# =============================================================================
+# Путь: весь сервер запускается под этим venv ПООЧЕРЁДНО с основным.
+# Здесь работает ТОЛЬКО Moirai-2. PatchTST в этом venv не функционирует
+# (другой torch, нет granite-tsfm) — для него используется основной .venv.
+#
+# uni2ts — research-код Salesforce, диктует старый стек:
+#   torch<2.5, transformers 4.44, pandas~=2.1, numpy~=1.26, jax/gluonts/lightning.
+# Поэтому версии pandas/numpy/transformers НЕ пиним сами — их выбирает uni2ts.
+#
+# ВНИМАНИЕ: код проекта писался под pandas 3.x. Здесь будет pandas 2.1.x.
+# Если что-то упадёт в рантайме на pandas API — смотри трейс, чиним точечно.
+#
+# УСТАНОВКА (Windows PowerShell):
+#   cd "S:\Job\Price Movement Predictor\app_core"
+#   py -3.11 -m venv --clear .venv-moirai
+#   .\.venv-moirai\Scripts\python.exe -m pip install --upgrade pip
+#   .\.venv-moirai\Scripts\python.exe -m pip install -r requirements-moirai_2.txt
+#
+# ЗАПУСК сервера под Moirai:
+#   .\.venv-moirai\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+# -----------------------------------------------------------------------------
+
+# --- torch под uni2ts (НЕ 2.10 как в основном проекте) -----------------------
+# uni2ts требует torch<2.5 → 2.4.1. Подбери cuXXX под карту/драйвер.
+# Если GPU не нужен — убери --extra-index-url и оставь голый torch==2.4.1.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.4.1+cu121
+
+# --- Moirai + дообучение -----------------------------------------------------
+# transformers пиним под эпоху torch 2.4.x (иначе падает на device_mesh).
+transformers==4.44.2
+uni2ts==2.0.0
+peft
+
+# --- веб-стек приложения (перенесён из основного requirements) ---------------
+# pandas/numpy НЕ указываем — их версию диктует uni2ts (pandas 2.1.4, numpy 1.26.4).
+fastapi
+uvicorn[standard]
+pydantic
+plotly
+yfinance
+python-multipart
+debugpy
+
+# --- провайдер данных Т-Инвестиций -------------------------------------------
+--extra-index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple
+t-tech-investments
+
+# --- утилиты -----------------------------------------------------------------
+huggingface-hub>=0.23.0
+
+hf_xet
+
+# ИСКЛЮЧЕНО намеренно:
+#   granite-tsfm        — PatchTST, несовместим с torch 2.4.1, в этом venv не нужен
+#   torch 2.10+cu128    — заменён на 2.4.1 выше
+#   chronos-forecasting — был закомментирован и в основном
